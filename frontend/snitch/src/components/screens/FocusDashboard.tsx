@@ -80,7 +80,7 @@ export default function FocusDashboard({ token, user }: Props) {
     active: running,
     videoRef,
     canvasRef,
-    onStrike: () => injectDistraction(),
+    onStrike: (category) => injectDistraction(category),
   })
 
   // ── Camera: start when session starts, stop when it ends ───────────────
@@ -172,8 +172,11 @@ export default function FocusDashboard({ token, user }: Props) {
     if (e.key === 'Escape') { committingRef.current = true; setEditing(false); setInputVal('') }
   }
 
-  function injectDistraction() {
+  function injectDistraction(category: import('../../utils/distractionAnalyzer').DistractionCategory = 'looking_away') {
     const elapsed = (totalSeconds - seconds) / totalSeconds
+    if (stakeId !== null) {
+      apiPost<void>('/stakes/report-distraction', { hostname: category, url: `snitch://distraction/${category}` }, token).catch(() => {})
+    }
     setDistractions(prev => [...prev, elapsed])
   }
 
@@ -416,7 +419,7 @@ export default function FocusDashboard({ token, user }: Props) {
 
       {import.meta.env.DEV && running && (
         <button
-          onClick={injectDistraction}
+          onClick={() => injectDistraction()}
           className="text-xs text-error border border-error rounded px-3 py-1 opacity-60 hover:opacity-100 transition-opacity"
         >
           [dev] distracted

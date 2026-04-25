@@ -3,6 +3,7 @@ import Button from "../atoms/Button";
 import Card from "../atoms/Card";
 import Chip from "../atoms/Chip";
 import { useDistractionDetection } from "../../hooks/useDistractionDetection";
+import { apiPost } from "../../api/client";
 import type {
   DistractionCategory,
   DistractionStatus,
@@ -41,8 +42,10 @@ function formatRemaining(seconds: number): string {
 
 export default function DistractionMonitor({
   navigate: _navigate,
+  token,
 }: {
   navigate: (screen: Screen) => void;
+  token: string | null;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -159,22 +162,37 @@ export default function DistractionMonitor({
     addEvent(cat, "warning");
   }, []);
 
-  const handleStrike = useCallback((cat: DistractionCategory) => {
-    const onBreak =
-      breakUntilRef.current !== null && Date.now() < breakUntilRef.current;
-    if (onBreak) {
-      // Being out of frame is expected during any break — suppress
-      if (cat === "out_of_frame") return;
-      // Phone use is expected during a declared phone call — suppress
-      if (cat === "phone_detected" && breakReasonRef.current === "call") return;
-      // Anything else during a break means they lied — revoke the break immediately
-      breakUntilRef.current = null;
-      breakReasonRef.current = null;
-      setBreakUntilState(null);
-    }
-    setStrikes((s) => s + 1);
-    addEvent(cat, "distracted");
-  }, []);
+  const handleStrike = useCallback(
+    (cat: DistractionCategory) => {
+      const onBreak =
+        breakUntilRef.current !== null && Date.now() < breakUntilRef.current;
+      if (onBreak) {
+        // Being out of frame is expected during any break — suppress
+        if (cat === "out_of_frame") return;
+        // Phone use is expected during a declared phone call — suppress
+        if (cat === "phone_detected" && breakReasonRef.current === "call")
+          return;
+        // Anything else during a break means they lied — revoke the break immediately
+        breakUntilRef.current = null;
+        breakReasonRef.current = null;
+        setBreakUntilState(null);
+      }
+      setStrikes((s) => s + 1);
+      addEvent(cat, "distracted");
+
+      // Report distraction to backend if authenticated
+      if (token) {
+        apiPost(
+          "/stakes/report-distraction",
+          { hostname: "localhost:5173", url: "lksfdj" },
+          token,
+        ).catch(() => {
+          /* Silently fail if not on an active stake */
+        });
+      }
+    },
+    [token],
+  );
 
   const { loadingState, loadingStep, errorMessage, currentStatus } =
     useDistractionDetection({
