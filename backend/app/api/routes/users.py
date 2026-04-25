@@ -1,11 +1,12 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy.exc import IntegrityError
+from sqlmodel import col, select
 
 from app.api.deps import CurrentUserDep
 from app.core.database import SessionDep
 from app.core.security import hash_password
 from app.models.user import User
-from app.schemas.user import UserCreate, UserRead
+from app.schemas.user import UserCreate, UserRead, UserSearchResult
 
 router = APIRouter()
 
@@ -15,7 +16,7 @@ async def create_user(body: UserCreate, session: SessionDep):
     user = User(
         email=body.email,
         hashed_password=hash_password(body.password),
-        display_name=body.display_name,
+        username=body.username,
         discord_uid=body.discord_uid,
     )
     session.add(user)
@@ -23,7 +24,7 @@ async def create_user(body: UserCreate, session: SessionDep):
         await session.commit()
     except IntegrityError:
         await session.rollback()
-        raise HTTPException(status_code=409, detail='Email or display name already taken')
+        raise HTTPException(status_code=409, detail='Email or username already taken')
     await session.refresh(user)
     return UserRead.model_validate(user)
 
@@ -31,3 +32,18 @@ async def create_user(body: UserCreate, session: SessionDep):
 @router.get('/me', response_model=UserRead)
 async def get_me(user: CurrentUserDep):
     return UserRead.model_validate(user)
+
+
+@router.get('/search', response_model=list[UserSearchResult])
+async def search_users(
+    session: SessionDep,
+    user: CurrentUserDep,
+    q: str = Query(min_length=1, max_length=50),
+):
+    result = await session.exec(
+        select(User)
+        .where(col(User.username).startswith(q.lower()))
+        .where(User.id != user.id)
+        .limit(10)
+    )
+    return [UserSearchResult.model_validate(u) for u in result.all()]
