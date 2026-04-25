@@ -37,14 +37,17 @@ All currently implemented endpoints:
 | POST | `/api/stakes` | Yes | Create stake |
 | GET | `/api/stakes` | Yes | List stakes created by current user |
 | GET | `/api/stakes/received` | Yes | List stakes where current user is a recipient |
+| POST | `/api/stakes/report-distraction` | Yes | Increment distraction count on active stake |
 | GET | `/api/stakes/{stake_id}` | Yes | Stake details |
 | POST | `/api/stakes/{stake_id}/activate` | Yes | Activate pending stake |
 | PATCH | `/api/stakes/{stake_id}` | Yes | Update active stake progress |
 | POST | `/api/stakes/{stake_id}/resolve` | Yes | Resolve active stake |
 | DELETE | `/api/stakes/{stake_id}` | Yes | Cancel pending stake |
 | POST | `/api/payments/setup-intent` | Yes | Create Stripe SetupIntent |
+| POST | `/api/payments/confirm-setup` | Yes | Confirm SetupIntent and save payment method |
 | POST | `/api/connect/onboarding-link` | Yes | Create Stripe Connect onboarding link |
-| GET | `/api/connect/status` | Yes | Stripe Connect status |
+| GET | `/api/connect/status` | Yes | Stripe Connect account status |
+| POST | `/api/connect/login-link` | Yes | Get Express dashboard login link |
 | POST | `/api/webhooks/stripe` | No* | Stripe webhook (server-to-server) |
 
 `*` Webhook requests must include a valid Stripe signature header.
@@ -122,9 +125,11 @@ Request body:
   "email": "alice@example.com",
   "password": "supersecret",
   "username": "alice",
-  "discord_uid": 123456789012345678 // This is an optional field
+  "discord_uid": 123456789012345678
 }
 ```
+
+`discord_uid` is optional.
 
 Example:
 
@@ -134,8 +139,7 @@ curl -X POST http://localhost:8000/api/users \
   -d '{
     "email": "alice@example.com",
     "password": "supersecret",
-    "username": "alice",
-    "discord_uid": 123456789012345678
+    "username": "alice"
   }'
 ```
 
@@ -294,6 +298,35 @@ curl http://localhost:8000/api/stakes/received \
   -H "Authorization: Bearer <access_token>"
 ```
 
+### POST /api/stakes/report-distraction
+
+Increments `distraction_count` by 1 on the caller's currently active stake. Called by the Chrome extension when it detects a blocked-site visit.
+
+Rules:
+- Caller must be the stake creator
+- Caller must have exactly one `active` stake
+
+Request body:
+
+```json
+{
+  "hostname": "twitter.com",
+  "url": "https://twitter.com/home"
+}
+```
+
+Example:
+
+```bash
+curl -X POST http://localhost:8000/api/stakes/report-distraction \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"hostname": "twitter.com", "url": "https://twitter.com/home"}'
+```
+
+Common errors:
+- `404`: No active stake found
+
 ### GET /api/stakes/{stake_id}
 
 Gets one stake by id.
@@ -353,25 +386,20 @@ curl -X PATCH http://localhost:8000/api/stakes/42 \
 
 ### POST /api/stakes/{stake_id}/resolve
 
-Resolves an active stake as completed or failed.
+Resolves an active stake.
 
 Rules:
 - Only creator can resolve
 - Stake must be `active`
-- On `failed`, payout amounts are currently split and stored, but transfer execution is still TODO in service code
+- **Outcome is backend-derived**: if `distraction_count >= 3` the stake is `failed` and the creator's card is charged immediately; otherwise it is `completed` and no money moves.
 
 Request body:
 
 ```json
 {
-  "outcome": "failed",
   "elapsed_seconds": 1800
 }
 ```
-
-Allowed outcomes:
-- `completed`
-- `failed`
 
 Example:
 
@@ -379,11 +407,13 @@ Example:
 curl -X POST http://localhost:8000/api/stakes/42/resolve \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
-  -d '{
-    "outcome": "failed",
-    "elapsed_seconds": 1800
-  }'
+  -d '{"elapsed_seconds": 1800}'
 ```
+
+On failure, the creator is charged `amount_cents` and the funds are split evenly across recipients via Stripe Transfers. The returned stake will have `status: "paid_out"` and each recipient row will have `payout_status: "paid"` and a `stripe_transfer_id`.
+
+Common errors:
+- `402`: Card charge failed (card declined or 3DS required)
 
 ### DELETE /api/stakes/{stake_id}
 
@@ -410,7 +440,7 @@ Creates a Stripe SetupIntent for saving a payment method.
 
 Notes:
 - Auth required
-- Creates Stripe customer if missing
+- Creates Stripe customer if one does not exist yet
 
 Example:
 
@@ -428,17 +458,51 @@ Example response:
 }
 ```
 
+### POST /api/payments/confirm-setup
+
+Called after the frontend (or Stripe CLI) confirms a SetupIntent. Retrieves the SetupIntent from Stripe, verifies it belongs to the current user's customer, and saves the payment method to the user record.
+
+Notes:
+- Intended to be called immediately after `stripe.confirmSetup()` resolves on the frontend, so the payment method is available without waiting for a webhook.
+
+Request body:
+
+```json
+{
+  "setup_intent_id": "seti_..."
+}
+```
+
+Example:
+
+```bash
+curl -X POST http://localhost:8000/api/payments/confirm-setup \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"setup_intent_id": "seti_..."}'
+```
+
+Example response:
+
+```json
+{ "ok": true }
+```
+
+Common errors:
+- `400`: SetupIntent has not succeeded
+- `403`: SetupIntent does not belong to this customer
+
 ---
 
 ## Connect
 
 ### POST /api/connect/onboarding-link
 
-Returns a Stripe Connect onboarding link for current user.
+Returns a Stripe Connect Express onboarding link for the current user.
 
 Notes:
 - Auth required
-- Creates connect account if missing
+- Creates a Connect account if one does not exist yet
 
 Example:
 
@@ -457,7 +521,7 @@ Example response:
 
 ### GET /api/connect/status
 
-Returns current user Stripe Connect account status.
+Returns current user's Stripe Connect account status, refreshing `stripe_account_enabled` from Stripe if it has changed.
 
 Example:
 
@@ -476,6 +540,32 @@ Example response:
   "details_submitted": true
 }
 ```
+
+### POST /api/connect/login-link
+
+Generates a single-use Stripe Express dashboard login link for the current user. Useful for demoing a recipient's balance after a stake resolves.
+
+Notes:
+- Link is short-lived (expires in minutes) and single-use.
+- User must have a Connect account.
+
+Example:
+
+```bash
+curl -X POST http://localhost:8000/api/connect/login-link \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Example response:
+
+```json
+{
+  "url": "https://connect.stripe.com/express/..."
+}
+```
+
+Common errors:
+- `404`: No Connect account on this user
 
 ---
 
@@ -496,7 +586,8 @@ Notes:
 Example local test with Stripe CLI:
 
 ```bash
-stripe listen --forward-to localhost:8000/api/webhooks/stripe
+stripe listen --forward-to localhost:8000/api/webhooks/stripe \
+              --forward-connect-to localhost:8000/api/webhooks/stripe
 ```
 
 Then trigger an event:
