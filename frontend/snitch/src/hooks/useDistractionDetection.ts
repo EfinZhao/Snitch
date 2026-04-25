@@ -165,8 +165,7 @@ export function useDistractionDetection({ active, videoRef, canvasRef, onWarning
   const [currentStatus, setCurrentStatus] = useState<DistractionStatus>('focused')
 
   const modelsRef       = useRef<Models | null>(null)
-  const rafRef          = useRef<number | null>(null)
-  const lastInferTime   = useRef(0)
+  const rafRef          = useRef<ReturnType<typeof setInterval> | null>(null)
   const analyzerState   = useRef<AnalyzerState>(createAnalyzerState())
   const activeRef       = useRef(active)
 
@@ -241,15 +240,11 @@ export function useDistractionDetection({ active, videoRef, canvasRef, onWarning
   }, [])
 
   // ── Inference loop ─────────────────────────────────────────────────────────
+  // Uses setInterval instead of requestAnimationFrame so inference continues
+  // even when the tab is in the background (RAF is frozen by browsers in hidden tabs).
 
-  const runLoop = useCallback((timestamp: number) => {
+  const runInference = useCallback(() => {
     if (!activeRef.current) return
-
-    rafRef.current = requestAnimationFrame(runLoop)
-
-    // Throttle to INFERENCE_INTERVAL_MS
-    if (timestamp - lastInferTime.current < INFERENCE_INTERVAL_MS) return
-    lastInferTime.current = timestamp
 
     const video  = videoRef.current
     const canvas = canvasRef.current
@@ -282,7 +277,10 @@ export function useDistractionDetection({ active, videoRef, canvasRef, onWarning
     for (const cat of newWarnings) onWarningRef.current?.(cat)
     for (const cat of newStrikes)  onStrikeRef.current?.(cat)
 
-    drawResults(canvas, video, face, hand, pose, object)
+    // Skip canvas drawing in background — inference still runs, just no visual output
+    if (document.visibilityState === 'visible') {
+      drawResults(canvas, video, face, hand, pose, object)
+    }
   }, [videoRef, canvasRef])
 
   // ── Effect: start/stop loop ────────────────────────────────────────────────
@@ -290,7 +288,7 @@ export function useDistractionDetection({ active, videoRef, canvasRef, onWarning
   useEffect(() => {
     if (!active) {
       if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current)
+        clearInterval(rafRef.current)
         rafRef.current = null
       }
       setCurrentStatus('focused')
@@ -306,20 +304,20 @@ export function useDistractionDetection({ active, videoRef, canvasRef, onWarning
     if (!modelsRef.current) {
       loadModels().then(() => {
         if (activeRef.current) {
-          rafRef.current = requestAnimationFrame(runLoop)
+          rafRef.current = setInterval(runInference, INFERENCE_INTERVAL_MS)
         }
       })
     } else {
-      rafRef.current = requestAnimationFrame(runLoop)
+      rafRef.current = setInterval(runInference, INFERENCE_INTERVAL_MS)
     }
 
     return () => {
       if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current)
+        clearInterval(rafRef.current)
         rafRef.current = null
       }
     }
-  }, [active, loadModels, runLoop, canvasRef])
+  }, [active, loadModels, runInference, canvasRef])
 
   return { loadingState, loadingStep, errorMessage, currentStatus }
 }

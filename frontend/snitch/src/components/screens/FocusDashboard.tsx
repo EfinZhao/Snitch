@@ -7,13 +7,16 @@ import type { Screen, UserProfile, StakeRead } from '../../types'
 const DEFAULT_SECONDS = 25 * 60
 const CX = 124, CY = 124, R = 112
 const SYNC_INTERVAL_MS = 30_000
+const AWAY_LIMIT_MS = 30_000
+const SESSION_KEY = 'snitch_session'
+const AWAY_KEY = 'snitch_away_at'
 
 function formatTime(s: number) {
   const h = Math.floor(s / 3600)
   const m = Math.floor((s % 3600) / 60)
   const sec = s % 60
   if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
-  return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '00')}`
+  return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
 }
 
 function parseInput(raw: string): number | null {
@@ -41,6 +44,24 @@ function trianglePoints(cx: number, cy: number, size = 7): string {
 type Recipient = { username: string }
 type SearchResult = { id: number; username: string }
 
+type PersistedSession = {
+  stakeId: number
+  endEpoch: number        // absolute ms timestamp when the timer expires
+  durationSeconds: number
+  amountCents: number
+  recipientUsernames: string[]
+  distractionFractions: number[]
+}
+
+type SummaryData = {
+  outcome: 'completed' | 'failed'
+  reason: string
+  amountCents: number
+  strikes: number
+  totalSeconds: number
+  elapsedSeconds: number
+}
+
 interface Props {
   navigate: (screen: Screen) => void
   token: string
@@ -57,6 +78,7 @@ export default function FocusDashboard({ token, user }: Props) {
   const committingRef = useRef(false)
 
   const [distractions, setDistractions] = useState<number[]>([])
+  const [amountCents, setAmountCents] = useState(0)
 
   // Stakes / session
   const [amount, setAmount] = useState('')
@@ -64,6 +86,9 @@ export default function FocusDashboard({ token, user }: Props) {
   const [stakeId, setStakeId] = useState<number | null>(null)
   const [locking, setLocking] = useState(false)
   const [lockError, setLockError] = useState('')
+
+  // Post-session summary
+  const [summary, setSummary] = useState<SummaryData | null>(null)
 
   // Add recipient modal
   const [showModal, setShowModal] = useState(false)
@@ -76,6 +101,145 @@ export default function FocusDashboard({ token, user }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
 
+  // Refs for stale-closure-safe event handlers (set up with [] deps)
+  const stakeIdRef = useRef<number | null>(null)
+  const secondsRef = useRef(DEFAULT_SECONDS)
+  const totalSecondsRef = useRef(DEFAULT_SECONDS)
+  const distractionsRef = useRef<number[]>([])
+  const amountCentsRef = useRef(0)
+  const tokenRef = useRef(token)
+
+  // Keep refs in sync after every render
+  useEffect(() => {
+    stakeIdRef.current = stakeId
+    secondsRef.current = seconds
+    totalSecondsRef.current = totalSeconds
+    distractionsRef.current = distractions
+    amountCentsRef.current = amountCents
+    tokenRef.current = token
+  })
+
+  // ── Session recovery on mount ───────────────────────────────────────────
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const raw = localStorage.getItem(SESSION_KEY)
+    if (!raw) return
+    let session: PersistedSession
+    try { session = JSON.parse(raw) } catch { localStorage.removeItem(SESSION_KEY); return }
+
+    const now = Date.now()
+    const awayAtStr = localStorage.getItem(AWAY_KEY)
+
+    const remaining = Math.max(0, Math.floor((session.endEpoch - now) / 1000))
+
+    if (awayAtStr) {
+      const awayMs = now - parseInt(awayAtStr)
+      localStorage.removeItem(AWAY_KEY)
+      if (awayMs > AWAY_LIMIT_MS) {
+        localStorage.removeItem(SESSION_KEY)
+        const elapsed = session.durationSeconds - remaining
+        /* eslint-disable react-hooks/set-state-in-effect */
+        setSummary({ outcome: 'failed', reason: 'You left the session for more than 30 seconds.', amountCents: session.amountCents, strikes: session.distractionFractions.length, totalSeconds: session.durationSeconds, elapsedSeconds: elapsed })
+        /* eslint-enable react-hooks/set-state-in-effect */
+        apiPost(`/stakes/${session.stakeId}/resolve`, { outcome: 'failed', elapsed_seconds: elapsed }, token).catch(() => {})
+        return
+      }
+    }
+
+    if (remaining <= 0) {
+      localStorage.removeItem(SESSION_KEY)
+      localStorage.removeItem(AWAY_KEY)
+      /* eslint-disable react-hooks/set-state-in-effect */
+      setSummary({ outcome: 'completed', reason: 'Timer finished while you were away.', amountCents: session.amountCents, strikes: session.distractionFractions.length, totalSeconds: session.durationSeconds, elapsedSeconds: session.durationSeconds })
+      /* eslint-enable react-hooks/set-state-in-effect */
+      apiPost(`/stakes/${session.stakeId}/resolve`, { outcome: 'completed', elapsed_seconds: session.durationSeconds }, token).catch(() => {})
+      return
+    }
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setStakeId(session.stakeId)
+    setTotalSeconds(session.durationSeconds)
+    setSeconds(remaining)
+    setDistractions(session.distractionFractions)
+    setAmount((session.amountCents / 100).toFixed(2))
+    setAmountCents(session.amountCents)
+    setRecipients(session.recipientUsernames.map(u => ({ username: u })))
+    setRunning(true)
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [])
+
+  // ── Visibility / beforeunload tracking ─────────────────────────────────
+  useEffect(() => {
+    function handleHidden() {
+      if (stakeIdRef.current !== null) {
+        localStorage.setItem(AWAY_KEY, String(Date.now()))
+      }
+    }
+
+    function handleVisible() {
+      const awayAtStr = localStorage.getItem(AWAY_KEY)
+      if (!awayAtStr || stakeIdRef.current === null) {
+        localStorage.removeItem(AWAY_KEY)
+        return
+      }
+      const awayMs = Date.now() - parseInt(awayAtStr)
+      localStorage.removeItem(AWAY_KEY)
+
+      if (awayMs > AWAY_LIMIT_MS) {
+        const id = stakeIdRef.current
+        // Compute elapsed from endEpoch so it's accurate regardless of how long we were away
+        let elapsed = totalSecondsRef.current - secondsRef.current
+        const raw = localStorage.getItem(SESSION_KEY)
+        if (raw) {
+          try {
+            const s: PersistedSession = JSON.parse(raw)
+            const rem = Math.max(0, Math.floor((s.endEpoch - Date.now()) / 1000))
+            elapsed = s.durationSeconds - rem
+          } catch {}
+        }
+        localStorage.removeItem(SESSION_KEY)
+        setSummary({
+          outcome: 'failed',
+          reason: 'You left the session for more than 30 seconds.',
+          amountCents: amountCentsRef.current,
+          strikes: distractionsRef.current.length,
+          totalSeconds: totalSecondsRef.current,
+          elapsedSeconds: elapsed,
+        })
+        setRunning(false)
+        setStakeId(null)
+        apiPost(`/stakes/${id}/resolve`, { outcome: 'failed', elapsed_seconds: elapsed }, tokenRef.current).catch(() => {})
+      } else {
+        // Recompute remaining from endEpoch — source of truth
+        const raw = localStorage.getItem(SESSION_KEY)
+        if (raw) {
+          try {
+            const s: PersistedSession = JSON.parse(raw)
+            const corrected = Math.max(0, Math.floor((s.endEpoch - Date.now()) / 1000))
+            setSeconds(corrected)
+          } catch {}
+        }
+      }
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'hidden') handleHidden()
+      else handleVisible()
+    }
+
+    function handleBeforeUnload() {
+      if (stakeIdRef.current !== null) {
+        localStorage.setItem(AWAY_KEY, String(Date.now()))
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const { currentStatus } = useDistractionDetection({
     active: running,
     videoRef,
@@ -85,7 +249,7 @@ export default function FocusDashboard({ token, user }: Props) {
 
   // ── Camera: start when session starts, stop when it ends ───────────────
   useEffect(() => {
-    const video = videoRef.current // capture so cleanup uses the same node
+    const video = videoRef.current
     if (!running) {
       if (video?.srcObject) {
         ;(video.srcObject as MediaStream).getTracks().forEach(t => t.stop())
@@ -103,7 +267,7 @@ export default function FocusDashboard({ token, user }: Props) {
         videoRef.current.srcObject = s
         videoRef.current.play().catch(() => {})
       })
-      .catch(() => {}) // camera denied — tracker silently disabled
+      .catch(() => {})
     return () => {
       cancelled = true
       stream?.getTracks().forEach(t => t.stop())
@@ -125,27 +289,37 @@ export default function FocusDashboard({ token, user }: Props) {
   useEffect(() => {
     if (!running || seconds !== 0 || stakeId === null) return
     const id = stakeId
-    const elapsed = totalSeconds
+    const total = totalSeconds
+    const cents = amountCents
+    const strikes = distractions.length
     /* eslint-disable react-hooks/set-state-in-effect */
     setRunning(false)
     setStakeId(null)
+    setSummary({ outcome: 'completed', reason: 'You stayed focused the whole time.', amountCents: cents, strikes, totalSeconds: total, elapsedSeconds: total })
     /* eslint-enable react-hooks/set-state-in-effect */
-    apiPost(`/stakes/${id}/resolve`, { outcome: 'completed', elapsed_seconds: elapsed }, token)
-      .catch(() => {})
-  }, [running, seconds, stakeId, totalSeconds, token])
+    localStorage.removeItem(SESSION_KEY)
+    localStorage.removeItem(AWAY_KEY)
+    apiPost(`/stakes/${id}/resolve`, { outcome: 'completed', elapsed_seconds: total }, token).catch(() => {})
+  }, [running, seconds, stakeId, totalSeconds, token, amountCents, distractions.length])
 
-  // ── Periodic progress sync to backend ──────────────────────────────────
+  // ── Periodic progress sync ──────────────────────────────────────────────
   useEffect(() => {
     if (!running || stakeId === null) return
     const id = setInterval(() => {
       const elapsed = totalSeconds - seconds
-      apiPatch(`/stakes/${stakeId}`, {
-        distraction_count: distractions.length,
-        elapsed_seconds: elapsed,
-      }, token).catch(() => {})
+      apiPatch(`/stakes/${stakeId}`, { distraction_count: distractions.length, elapsed_seconds: elapsed }, token).catch(() => {})
+      // Keep distractions in localStorage up to date
+      const raw = localStorage.getItem(SESSION_KEY)
+      if (raw) {
+        try {
+          const session: PersistedSession = JSON.parse(raw)
+          session.distractionFractions = distractions
+          localStorage.setItem(SESSION_KEY, JSON.stringify(session))
+        } catch {}
+      }
     }, SYNC_INTERVAL_MS)
     return () => clearInterval(id)
-  }, [running, stakeId, distractions.length, seconds, totalSeconds, token])
+  }, [running, stakeId, distractions, seconds, totalSeconds, token])
 
   // ── Time editing ────────────────────────────────────────────────────────
   function startEditing() {
@@ -173,11 +347,22 @@ export default function FocusDashboard({ token, user }: Props) {
   }
 
   function injectDistraction(category: import('../../utils/distractionAnalyzer').DistractionCategory = 'looking_away') {
-    const elapsed = (totalSeconds - seconds) / totalSeconds
+    const fraction = (totalSeconds - seconds) / totalSeconds
     if (stakeId !== null) {
       apiPost<void>('/stakes/report-distraction', { hostname: category, url: `snitch://distraction/${category}` }, token).catch(() => {})
     }
-    setDistractions(prev => [...prev, elapsed])
+    setDistractions(prev => {
+      const updated = [...prev, fraction]
+      const raw = localStorage.getItem(SESSION_KEY)
+      if (raw) {
+        try {
+          const session: PersistedSession = JSON.parse(raw)
+          session.distractionFractions = updated
+          localStorage.setItem(SESSION_KEY, JSON.stringify(session))
+        } catch {}
+      }
+      return updated
+    })
   }
 
   // ── Recipient search ────────────────────────────────────────────────────
@@ -187,15 +372,12 @@ export default function FocusDashboard({ token, user }: Props) {
   function handleRecipientInputChange(val: string) {
     const clean = val.replace(/\s/g, '')
     setRecipientInput(clean)
-
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
     if (clean.length < 1) { setSearchResults([]); return }
-
     searchTimerRef.current = setTimeout(async () => {
       setSearching(true)
       try {
         const results = await apiGet<SearchResult[]>(`/users/search?q=${encodeURIComponent(clean)}`, token)
-        // Filter out self and already-added recipients
         setSearchResults(results.filter(
           r => r.username !== user.username && !recipients.some(rec => rec.username === r.username)
         ))
@@ -207,8 +389,6 @@ export default function FocusDashboard({ token, user }: Props) {
     }, 300)
   }
 
-  // Only allow adding users that appeared in search results — prevents adding
-  // non-existent users and enforces self-exclusion at the search level.
   function addRecipient(username: string) {
     const clean = username.trim().replace(/^@/, '')
     if (!clean) return
@@ -228,24 +408,30 @@ export default function FocusDashboard({ token, user }: Props) {
   async function handleLockIn() {
     setLockError('')
     const amountNum = parseFloat(amount)
-    if (isNaN(amountNum) || amountNum <= 0) {
-      setLockError('Enter an amount greater than $0.')
-      return
-    }
-    if (recipients.length === 0) {
-      setLockError('Add at least one recipient.')
-      return
-    }
+    if (isNaN(amountNum) || amountNum <= 0) { setLockError('Enter an amount greater than $0.'); return }
+    if (recipients.length === 0) { setLockError('Add at least one recipient.'); return }
 
-    const amount_cents = Math.round(amountNum * 100)
+    const cents = Math.round(amountNum * 100)
     setLocking(true)
     try {
       const stake = await apiPost<StakeRead>('/stakes', {
-        amount_cents,
+        amount_cents: cents,
         duration_seconds: totalSeconds,
         recipient_usernames: recipients.map(r => r.username),
       }, token)
       await apiPost<StakeRead>(`/stakes/${stake.id}/activate`, {}, token)
+
+      localStorage.setItem(SESSION_KEY, JSON.stringify({
+        stakeId: stake.id,
+        endEpoch: Date.now() + totalSeconds * 1000,
+        durationSeconds: totalSeconds,
+        amountCents: cents,
+        recipientUsernames: recipients.map(r => r.username),
+        distractionFractions: [],
+      } satisfies PersistedSession))
+      localStorage.removeItem(AWAY_KEY)
+
+      setAmountCents(cents)
       setStakeId(stake.id)
       setRunning(true)
     } catch (err) {
@@ -261,10 +447,19 @@ export default function FocusDashboard({ token, user }: Props) {
     }
   }
 
+  function dismissSummary() {
+    setSummary(null)
+    setDistractions([])
+    setAmountCents(0)
+    setAmount('')
+    setRecipients([])
+    setSeconds(DEFAULT_SECONDS)
+    setTotalSeconds(DEFAULT_SECONDS)
+  }
+
   const circumference = 2 * Math.PI * R
   const elapsed = (totalSeconds - seconds) / totalSeconds
 
-  // Arc color reflects live distraction status
   const arcColor = currentStatus === 'distracted'
     ? '#ef4444'
     : currentStatus === 'warning'
@@ -457,7 +652,6 @@ export default function FocusDashboard({ token, user }: Props) {
               )}
             </div>
 
-            {/* Search results */}
             {searchResults.length > 0 && (
               <div className="flex flex-col gap-1 max-h-40 overflow-y-auto -mx-2">
                 {searchResults.map(r => (
@@ -476,25 +670,59 @@ export default function FocusDashboard({ token, user }: Props) {
             )}
 
             {recipientInput.trim() && !searching && searchResults.length === 0 && (
-              <p className="font-body text-xs text-on-surface-variant text-center">
-                No users found.
-              </p>
+              <p className="font-body text-xs text-on-surface-variant text-center">No users found.</p>
             )}
 
             <div className="flex gap-3">
               <Button variant="ghost" fullWidth onClick={closeModal}>Cancel</Button>
-              <Button
-                variant="primary"
-                fullWidth
-                onClick={() => addRecipient(recipientInput)}
-                disabled={!canAddRecipient}
-              >
+              <Button variant="primary" fullWidth onClick={() => addRecipient(recipientInput)} disabled={!canAddRecipient}>
                 Add
               </Button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Session summary overlay */}
+      {summary && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center pb-8 sm:items-center">
+          <div className="absolute inset-0 bg-black/60" />
+          <div className="relative w-full max-w-sm mx-4 bg-surface rounded-3xl px-6 pt-8 pb-6 flex flex-col gap-5 shadow-2xl">
+            <div className="text-center">
+              <div className={`text-5xl mb-3 font-bold ${summary.outcome === 'completed' ? 'text-primary' : 'text-error'}`}>
+                {summary.outcome === 'completed' ? '✓' : '✗'}
+              </div>
+              <h2 className="font-display font-bold text-2xl text-on-surface">
+                {summary.outcome === 'completed' ? 'Session Complete' : 'Session Failed'}
+              </h2>
+              <p className="font-body text-sm text-on-surface-variant mt-1">{summary.reason}</p>
+            </div>
+
+            <div className="flex flex-col gap-3 bg-surface-container rounded-2xl px-4 py-4">
+              <SummaryRow label="Time focused" value={`${formatTime(Math.min(summary.elapsedSeconds, summary.totalSeconds))} / ${formatTime(summary.totalSeconds)}`} />
+              <SummaryRow label="Distractions" value={String(summary.strikes)} />
+              <SummaryRow
+                label={summary.outcome === 'completed' ? 'Amount kept' : 'Amount lost'}
+                value={`$${(summary.amountCents / 100).toFixed(2)}`}
+                valueClass={summary.outcome === 'completed' ? 'text-primary' : 'text-error'}
+              />
+            </div>
+
+            <Button variant="primary" fullWidth onClick={dismissSummary}>
+              Done
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SummaryRow({ label, value, valueClass = 'text-on-surface' }: { label: string; value: string; valueClass?: string }) {
+  return (
+    <div className="flex justify-between items-center">
+      <span className="font-body text-sm text-on-surface-variant">{label}</span>
+      <span className={`font-display font-semibold ${valueClass}`}>{value}</span>
     </div>
   )
 }
