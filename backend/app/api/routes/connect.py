@@ -1,9 +1,9 @@
 import stripe
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.api.deps import CurrentUserDep
 from app.core.database import SessionDep
-from app.schemas.payments import ConnectStatus, OnboardingLinkResponse
+from app.schemas.payments import ConnectStatus, LoginLinkResponse, OnboardingLinkResponse
 from app.services import stripe_service
 
 router = APIRouter()
@@ -40,3 +40,11 @@ async def get_connect_status(user: CurrentUserDep, session: SessionDep):
         payouts_enabled=account.payouts_enabled,
         details_submitted=account.details_submitted,
     )
+
+
+@router.post('/login-link', response_model=LoginLinkResponse)
+async def get_login_link(user: CurrentUserDep):
+    if not user.stripe_account_id:
+        raise HTTPException(status_code=404, detail='No Connect account')
+    url = await stripe_service.create_login_link(user.stripe_account_id)
+    return LoginLinkResponse(url=url)

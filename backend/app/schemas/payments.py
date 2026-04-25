@@ -19,3 +19,7 @@ class ConnectStatus(BaseModel):
     charges_enabled: bool
     payouts_enabled: bool
     details_submitted: bool
+
+
+class LoginLinkResponse(BaseModel):
+    url: str

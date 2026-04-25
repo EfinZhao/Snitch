@@ -1,27 +1,26 @@
 from datetime import UTC, datetime
 
+import stripe
 from fastapi import HTTPException
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.models.stake import PayoutStatus, Stake, StakeRecipient, StakeStatus
+from app.models.stake import STRIKE_THRESHOLD, PayoutStatus, Stake, StakeRecipient, StakeStatus
 from app.models.user import User
 from app.schemas.stake import (
     StakeCreate,
-    StakeOutcome,
     StakeRead,
     StakeRecipientRead,
     StakeResolve,
     StakeUpdate,
 )
+from app.services import stripe_service
 
 
 async def _build_stake_read(session: AsyncSession, stake: Stake) -> StakeRead:
     creator = await session.get(User, stake.creator_id)
 
-    result = await session.exec(
-        select(StakeRecipient).where(StakeRecipient.stake_id == stake.id)
-    )
+    result = await session.exec(select(StakeRecipient).where(StakeRecipient.stake_id == stake.id))
     recipients = result.all()
 
     recipient_reads: list[StakeRecipientRead] = []
@@ -53,9 +52,7 @@ async def _build_stake_read(session: AsyncSession, stake: Stake) -> StakeRead:
     )
 
 
-async def create_stake(
-    session: AsyncSession, creator: User, body: StakeCreate
-) -> StakeRead:
+async def create_stake(session: AsyncSession, creator: User, body: StakeCreate) -> StakeRead:
     if not creator.stripe_payment_method_id:
         raise HTTPException(
             status_code=400,
@@ -66,9 +63,7 @@ async def create_stake(
     if creator.username.lower() in usernames:
         raise HTTPException(status_code=400, detail='You cannot add yourself as a recipient')
 
-    result = await session.exec(
-        select(User).where(col(User.username).in_(usernames))
-    )
+    result = await session.exec(select(User).where(col(User.username).in_(usernames)))
     found_users = result.all()
     found_map = {u.username.lower(): u for u in found_users}
 
@@ -105,9 +100,7 @@ async def get_stake(session: AsyncSession, stake_id: int, user: User) -> StakeRe
     if stake is None:
         raise HTTPException(status_code=404, detail='Stake not found')
 
-    result = await session.exec(
-        select(StakeRecipient).where(StakeRecipient.stake_id == stake.id)
-    )
+    result = await session.exec(select(StakeRecipient).where(StakeRecipient.stake_id == stake.id))
     recipient_ids = [r.recipient_id for r in result.all()]
 
     if stake.creator_id != user.id and user.id not in recipient_ids:
@@ -116,9 +109,7 @@ async def get_stake(session: AsyncSession, stake_id: int, user: User) -> StakeRe
     return await _build_stake_read(session, stake)
 
 
-async def list_created_stakes(
-    session: AsyncSession, user: User, status: StakeStatus | None = None
-) -> list[StakeRead]:
+async def list_created_stakes(session: AsyncSession, user: User, status: StakeStatus | None = None) -> list[StakeRead]:
     query = select(Stake).where(Stake.creator_id == user.id)
     if status:
         query = query.where(Stake.status == status)
@@ -130,25 +121,19 @@ async def list_created_stakes(
 
 
 async def list_received_stakes(session: AsyncSession, user: User) -> list[StakeRead]:
-    result = await session.exec(
-        select(StakeRecipient.stake_id).where(StakeRecipient.recipient_id == user.id)
-    )
+    result = await session.exec(select(StakeRecipient.stake_id).where(StakeRecipient.recipient_id == user.id))
     stake_ids = result.all()
     if not stake_ids:
         return []
 
     result = await session.exec(
-        select(Stake)
-        .where(col(Stake.id).in_(stake_ids))
-        .order_by(col(Stake.created_at).desc())
+        select(Stake).where(col(Stake.id).in_(stake_ids)).order_by(col(Stake.created_at).desc())
     )
     stakes = result.all()
     return [await _build_stake_read(session, s) for s in stakes]
 
 
-async def activate_stake(
-    session: AsyncSession, stake_id: int, user: User
-) -> StakeRead:
+async def activate_stake(session: AsyncSession, stake_id: int, user: User) -> StakeRead:
     stake = await session.get(Stake, stake_id)
     if stake is None:
         raise HTTPException(status_code=404, detail='Stake not found')
@@ -165,9 +150,7 @@ async def activate_stake(
     return await _build_stake_read(session, stake)
 
 
-async def update_stake(
-    session: AsyncSession, stake_id: int, user: User, body: StakeUpdate
-) -> StakeRead:
+async def update_stake(session: AsyncSession, stake_id: int, user: User, body: StakeUpdate) -> StakeRead:
     stake = await session.get(Stake, stake_id)
     if stake is None:
         raise HTTPException(status_code=404, detail='Stake not found')
@@ -187,9 +170,7 @@ async def update_stake(
     return await _build_stake_read(session, stake)
 
 
-async def resolve_stake(
-    session: AsyncSession, stake_id: int, user: User, body: StakeResolve
-) -> StakeRead:
+async def resolve_stake(session: AsyncSession, stake_id: int, user: User, body: StakeResolve) -> StakeRead:
     stake = await session.get(Stake, stake_id)
     if stake is None:
         raise HTTPException(status_code=404, detail='Stake not found')
@@ -198,36 +179,75 @@ async def resolve_stake(
     if stake.status != StakeStatus.ACTIVE:
         raise HTTPException(status_code=400, detail='Can only resolve an active stake')
 
-    now = datetime.now(UTC)
-    stake.resolved_at = now
+    stake.resolved_at = datetime.now(UTC)
     stake.elapsed_seconds = body.elapsed_seconds
 
-    if body.outcome == StakeOutcome.COMPLETED:
+    if stake.distraction_count < STRIKE_THRESHOLD:
         stake.status = StakeStatus.COMPLETED
-    elif body.outcome == StakeOutcome.FAILED:
-        stake.status = StakeStatus.FAILED
+        session.add(stake)
+        await session.commit()
+        await session.refresh(stake)
+        return await _build_stake_read(session, stake)
 
-        result = await session.exec(
-            select(StakeRecipient).where(StakeRecipient.stake_id == stake.id)
-        )
-        recipients = result.all()
-        per_person = stake.amount_cents // len(recipients) if recipients else 0
+    # FAILED — split amount, charge the creator, transfer to each recipient.
+    result = await session.exec(select(StakeRecipient).where(StakeRecipient.stake_id == stake.id))
+    recipient_rows = result.all()
+    per_person = stake.amount_cents // len(recipient_rows) if recipient_rows else 0
+    for r in recipient_rows:
+        r.payout_cents = per_person
+        session.add(r)
 
-        for r in recipients:
-            r.payout_cents = per_person
+    creator = await session.get(User, stake.creator_id)
+
+    if stake.stripe_payment_intent_id is None:
+        try:
+            intent = await stripe_service.charge_for_stake(
+                stake,
+                customer_id=creator.stripe_customer_id,
+                payment_method_id=creator.stripe_payment_method_id,
+            )
+        except stripe.CardError as e:
+            stake.status = StakeStatus.FAILED
+            session.add(stake)
+            await session.commit()
+            raise HTTPException(status_code=402, detail=f'Card charge failed: {e.user_message or e.code}')
+
+        stake.stripe_payment_intent_id = intent.id
+
+        if intent.status != 'succeeded':
+            stake.status = StakeStatus.FAILED
+            session.add(stake)
+            await session.commit()
+            raise HTTPException(status_code=402, detail='Card charge did not succeed; cannot distribute payouts')
+
+        charge_id = intent.latest_charge
+        for r in recipient_rows:
+            recipient_user = await session.get(User, r.recipient_id)
+            if not recipient_user.stripe_account_enabled:
+                r.payout_status = PayoutStatus.FAILED
+                session.add(r)
+                continue
+            try:
+                transfer = await stripe_service.create_transfer(
+                    amount_cents=r.payout_cents,
+                    destination_account_id=recipient_user.stripe_account_id,
+                    charge_id=charge_id,
+                    stake_id=stake.id,
+                )
+                r.stripe_transfer_id = transfer.id
+                r.payout_status = PayoutStatus.PAID
+            except stripe.StripeError:
+                r.payout_status = PayoutStatus.FAILED
             session.add(r)
 
-        # TODO: trigger Stripe payout transfers here
-
+    stake.status = StakeStatus.PAID_OUT
     session.add(stake)
     await session.commit()
     await session.refresh(stake)
     return await _build_stake_read(session, stake)
 
 
-async def cancel_stake(
-    session: AsyncSession, stake_id: int, user: User
-) -> StakeRead:
+async def cancel_stake(session: AsyncSession, stake_id: int, user: User) -> StakeRead:
     stake = await session.get(Stake, stake_id)
     if stake is None:
         raise HTTPException(status_code=404, detail='Stake not found')

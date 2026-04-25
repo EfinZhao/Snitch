@@ -3,6 +3,8 @@ from enum import StrEnum
 
 from sqlmodel import Column, DateTime, Field, SQLModel
 
+STRIKE_THRESHOLD = 3
+
 
 class StakeStatus(StrEnum):
     PENDING = 'pending'
@@ -39,8 +41,9 @@ class Stake(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
 
-    elapsed_seconds: int | None = None
+    elapsed_seconds: int | None = Field(default=None)
     distraction_count: int = Field(default=0)
+    stripe_payment_intent_id: str | None = Field(default=None, unique=True)
 
 
 class StakeRecipient(SQLModel, table=True):
@@ -49,3 +52,4 @@ class StakeRecipient(SQLModel, table=True):
     recipient_id: int = Field(foreign_key='user.id', index=True)
     payout_cents: int | None = None
     payout_status: PayoutStatus = Field(default=PayoutStatus.PENDING)
+    stripe_transfer_id: str | None = Field(default=None, unique=True)

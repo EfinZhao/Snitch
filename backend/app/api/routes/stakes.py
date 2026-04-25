@@ -10,9 +10,7 @@ router = APIRouter()
 
 
 @router.post('', response_model=StakeRead, status_code=201)
-async def create_stake(
-    body: StakeCreate, session: SessionDep, user: CurrentUserDep
-):
+async def create_stake(body: StakeCreate, session: SessionDep, user: CurrentUserDep):
     return await stake_service.create_stake(session, user, body)
 
 
@@ -41,16 +39,12 @@ async def activate_stake(stake_id: int, session: SessionDep, user: CurrentUserDe
 
 
 @router.patch('/{stake_id}', response_model=StakeRead)
-async def update_stake(
-    stake_id: int, body: StakeUpdate, session: SessionDep, user: CurrentUserDep
-):
+async def update_stake(stake_id: int, body: StakeUpdate, session: SessionDep, user: CurrentUserDep):
     return await stake_service.update_stake(session, stake_id, user, body)
 
 
 @router.post('/{stake_id}/resolve', response_model=StakeRead)
-async def resolve_stake(
-    stake_id: int, body: StakeResolve, session: SessionDep, user: CurrentUserDep
-):
+async def resolve_stake(stake_id: int, body: StakeResolve, session: SessionDep, user: CurrentUserDep):
     return await stake_service.resolve_stake(session, stake_id, user, body)
 
 

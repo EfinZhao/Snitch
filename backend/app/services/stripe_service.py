@@ -3,6 +3,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
+from app.models.stake import Stake
 from app.models.user import CreditCardNetwork, User
 
 
@@ -81,6 +82,40 @@ async def handle_setup_intent_succeeded(session: AsyncSession, setup_intent) -> 
     )
 
 
+async def charge_for_stake(stake: Stake, customer_id: str, payment_method_id: str) -> stripe.PaymentIntent:
+    return await stripe.PaymentIntent.create_async(
+        amount=stake.amount_cents,
+        currency='usd',
+        customer=customer_id,
+        payment_method=payment_method_id,
+        off_session=True,
+        confirm=True,
+        transfer_group=f'stake_{stake.id}',
+        metadata={'stake_id': str(stake.id)},
+    )
+
+
+async def create_transfer(
+    amount_cents: int,
+    destination_account_id: str,
+    charge_id: str,
+    stake_id: int,
+) -> stripe.Transfer:
+    return await stripe.Transfer.create_async(
+        amount=amount_cents,
+        currency='usd',
+        destination=destination_account_id,
+        source_transaction=charge_id,
+        transfer_group=f'stake_{stake_id}',
+        metadata={'stake_id': str(stake_id)},
+    )
+
+
+async def create_login_link(account_id: str) -> str:
+    link = await stripe.Account.create_login_link_async(account_id)
+    return link.url
+
+
 async def handle_account_updated(session: AsyncSession, account) -> None:
     account_id = getattr(account, 'id', None)
     if not account_id:
@@ -91,6 +126,8 @@ async def handle_account_updated(session: AsyncSession, account) -> None:
     if user is None:
         return
 
-    user.stripe_account_enabled = getattr(account, 'charges_enabled', False) and getattr(account, 'payouts_enabled', False)
+    user.stripe_account_enabled = getattr(account, 'charges_enabled', False) and getattr(
+        account, 'payouts_enabled', False
+    )
     session.add(user)
     await session.commit()

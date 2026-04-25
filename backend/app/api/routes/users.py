@@ -55,9 +55,6 @@ async def search_users(
     q: str = Query(min_length=1, max_length=50),
 ):
     result = await session.exec(
-        select(User)
-        .where(col(User.username).startswith(q.lower()))
-        .where(User.id != user.id)
-        .limit(10)
+        select(User).where(col(User.username).startswith(q.lower())).where(User.id != user.id).limit(10)
     )
     return [UserSearchResult.model_validate(u) for u in result.all()]

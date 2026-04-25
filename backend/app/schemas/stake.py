@@ -51,7 +51,6 @@ class StakeUpdate(BaseModel):
 
 
 class StakeResolve(BaseModel):
-    outcome: StakeOutcome
     elapsed_seconds: int
 
 
