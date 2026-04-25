@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blocked — Snitch</title>
+  <link rel="stylesheet" href="popup.css" />
+  <style>
+    body {
+      width: 100vw;
+      max-height: none;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .blocked-page {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      max-width: 400px;
+      text-align: center;
+      padding: 32px;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .blocked-icon {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: var(--error-container);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 4px;
+    }
+
+    .blocked-icon svg {
+      color: var(--error);
+    }
+
+    .blocked-title {
+      font-family: var(--font-display);
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--on-surface);
+    }
+
+    .blocked-site {
+      font-family: var(--font-body);
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--error);
+      background: var(--error-container);
+      padding: 6px 16px;
+      border-radius: var(--radius-full);
+    }
+
+    .blocked-message {
+      font-family: var(--font-body);
+      font-size: 14px;
+      color: var(--on-surface-variant);
+      line-height: 1.6;
+    }
+
+    .blocked-brand {
+      font-family: var(--font-display);
+      font-size: 14px;
+      font-weight: 600;
+      font-style: italic;
+      color: var(--primary);
+      margin-top: 12px;
+      opacity: 0.7;
+    }
+  </style>
+</head>
+<body>
+  <div class="blocked-page">
+    <div class="blocked-icon">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+      </svg>
+    </div>
+    <h1 class="blocked-title">Site Blocked</h1>
+    <span class="blocked-site" id="blockedSite"></span>
+    <p class="blocked-message">
+      This site is on your flagged list and blocking is enabled.<br />
+      Stay focused — you've got this.
+    </p>
+    <span class="blocked-brand">Snitch</span>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const site = params.get("site") || "Unknown site";
+    document.getElementById("blockedSite").textContent = site;
+    document.title = `Blocked: ${site} — Snitch`;
+  </script>
+</body>
+</html>

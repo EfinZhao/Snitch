@@ -42,9 +42,19 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   const hostname = extractHostname(tab.url);
   if (!hostname) return;
 
-  chrome.storage.local.get(["blocklist", "visitLog"], (result) => {
+  chrome.storage.local.get(["blocklist", "visitLog", "blockingEnabled"], (result) => {
     const blocklist = result.blocklist || [];
     if (!isFlaggedSite(hostname, blocklist)) return;
+
+    if (result.blockingEnabled) {
+      const blockedUrl = chrome.runtime.getURL(
+        `blocked.html?site=${encodeURIComponent(hostname)}`
+      );
+      if (tab.url !== blockedUrl) {
+        chrome.tabs.update(tabId, { url: blockedUrl });
+      }
+      return;
+    }
 
     chrome.action.setBadgeText({ text: "!", tabId });
     chrome.action.setBadgeBackgroundColor({ color: "#335f87", tabId });
@@ -61,7 +71,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     const visitLog = result.visitLog || [];
     visitLog.unshift({ url: tab.url, hostname, timestamp: Date.now() });
 
-    // Keep only the most recent 200 entries
     if (visitLog.length > 200) visitLog.length = 200;
 
     chrome.storage.local.set({ visitLog });
