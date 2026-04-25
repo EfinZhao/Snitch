@@ -1,3 +1,5 @@
+const API_BASE = "http://localhost:8000/api";
+
 const DEFAULT_BLOCKLIST = [
   "youtube.com",
   "tiktok.com",
@@ -36,15 +38,29 @@ function isFlaggedSite(hostname, blocklist) {
   );
 }
 
+function reportDistraction(hostname, url, token) {
+  if (!token) return;
+  fetch(`${API_BASE}/stakes/report-distraction`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`,
+    },
+    body: JSON.stringify({ hostname, url }),
+  }).catch(() => {});
+}
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete" || !tab.url) return;
 
   const hostname = extractHostname(tab.url);
   if (!hostname) return;
 
-  chrome.storage.local.get(["blocklist", "visitLog", "blockingEnabled"], (result) => {
+  chrome.storage.local.get(["blocklist", "visitLog", "blockingEnabled", "authToken"], (result) => {
     const blocklist = result.blocklist || [];
     if (!isFlaggedSite(hostname, blocklist)) return;
+
+    reportDistraction(hostname, tab.url, result.authToken);
 
     if (result.blockingEnabled) {
       const blockedUrl = chrome.runtime.getURL(
