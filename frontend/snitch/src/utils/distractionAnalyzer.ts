@@ -127,10 +127,6 @@ function isLookingAway(face: FaceLandmarkerResult): boolean {
   return leftOffset > 0.42 && rightOffset > 0.42
 }
 
-function isLookingAwayStrike(state: AnalyzerState): boolean {
-  return state.lookingAwayWarningCount >= LOOKING_AWAY_WARNING_FRAMES
-}
-
 
 // ── State machine ────────────────────────────────────────────────────────────
 

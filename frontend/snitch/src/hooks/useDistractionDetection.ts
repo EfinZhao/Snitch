@@ -110,10 +110,12 @@ function drawPose(ctx: CanvasRenderingContext2D, lm: NormalizedLandmark[], W: nu
   }
 }
 
-function drawObjects(ctx: CanvasRenderingContext2D, result: ObjectDetectorResult, W: number, H: number) {
+function drawObjects(ctx: CanvasRenderingContext2D, result: ObjectDetectorResult) {
   for (const det of result.detections) {
     const cat = det.categories[0]
-    const { originX, originY, width, height } = det.boundingBox
+    const box = det.boundingBox
+    if (!box) continue
+    const { originX, originY, width, height } = box
     // Normalize if necessary (ObjectDetector may return pixel or normalized coords
     // depending on runningMode; in VIDEO mode it returns pixel coords)
     const isPhone = cat.categoryName === 'cell phone'
@@ -151,7 +153,7 @@ function drawResults(
   for (const lm of pose.landmarks) drawPose(ctx, lm, W, H)
   for (const lm of hand.landmarks) drawHand(ctx, lm, W, H)
   for (const lm of face.faceLandmarks) drawIris(ctx, lm, W, H)
-  drawObjects(ctx, objects, W, H)
+  drawObjects(ctx, objects)
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────

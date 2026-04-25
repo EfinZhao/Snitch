@@ -6,6 +6,6 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   optimizeDeps: {
-    exclude: ['@mediapipe/tasks-vision', '@xenova/transformers', 'onnxruntime-web'],
+    exclude: ['@mediapipe/tasks-vision'],
   },
 })
