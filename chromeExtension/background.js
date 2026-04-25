@@ -100,6 +100,13 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === "SESSION_UPDATE") {
+    chrome.storage.local.set({ activeSession: !!message.active });
+    sendResponse({ ok: true });
+  }
+});
+
 function shouldBlock(result) {
   if (result.activeSession) return false;
   return result.blockingEnabled;
