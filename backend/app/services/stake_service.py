@@ -8,6 +8,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models.stake import STRIKE_THRESHOLD, PayoutStatus, Stake, StakeRecipient, StakeStatus
 from app.models.user import User
 from app.schemas.stake import (
+    DistractionReport,
     StakeCreate,
     StakeRead,
     StakeRecipientRead,
@@ -241,6 +242,23 @@ async def resolve_stake(session: AsyncSession, stake_id: int, user: User, body: 
             session.add(r)
 
     stake.status = StakeStatus.PAID_OUT
+    session.add(stake)
+    await session.commit()
+    await session.refresh(stake)
+    return await _build_stake_read(session, stake)
+
+
+async def report_distraction(
+    session: AsyncSession, user: User, body: DistractionReport
+) -> StakeRead:
+    result = await session.exec(
+        select(Stake).where(Stake.creator_id == user.id, Stake.status == StakeStatus.ACTIVE)
+    )
+    stake = result.first()
+    if stake is None:
+        raise HTTPException(status_code=404, detail='No active stake found')
+
+    stake.distraction_count += 1
     session.add(stake)
     await session.commit()
     await session.refresh(stake)

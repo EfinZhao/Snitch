@@ -3,7 +3,7 @@ from fastapi import APIRouter, Query
 from app.api.deps import CurrentUserDep
 from app.core.database import SessionDep
 from app.models.stake import StakeStatus
-from app.schemas.stake import StakeCreate, StakeRead, StakeResolve, StakeUpdate
+from app.schemas.stake import DistractionReport, StakeCreate, StakeRead, StakeResolve, StakeUpdate
 from app.services import stake_service
 
 router = APIRouter()
@@ -26,6 +26,11 @@ async def list_my_stakes(
 @router.get('/received', response_model=list[StakeRead])
 async def list_received_stakes(session: SessionDep, user: CurrentUserDep):
     return await stake_service.list_received_stakes(session, user)
+
+
+@router.post('/report-distraction', response_model=StakeRead)
+async def report_distraction(body: DistractionReport, session: SessionDep, user: CurrentUserDep):
+    return await stake_service.report_distraction(session, user, body)
 
 
 @router.get('/{stake_id}', response_model=StakeRead)
