@@ -24,7 +24,7 @@ class User(SQLModel, table=True):
     discord_uid: int | None = Field(unique=True, index=True)
     email: str = Field(unique=True)
     hashed_password: str
-    display_name: str = Field(unique=True, index=True)
+    username: str = Field(unique=True, index=True)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

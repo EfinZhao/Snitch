@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.routes import auth, connect, payments, users, webhooks
+from app.api.routes import auth, connect, payments, stakes, users, webhooks
 
 api_router = APIRouter()
 
@@ -8,6 +8,7 @@ api_router.include_router(users.router, prefix='/users', tags=['Users'])
 api_router.include_router(auth.router, prefix='/auth', tags=['Auth'])
 api_router.include_router(payments.router, prefix='/payments', tags=['Payments'])
 api_router.include_router(connect.router, prefix='/connect', tags=['Connect'])
+api_router.include_router(stakes.router, prefix='/stakes', tags=['Stakes'])
 api_router.include_router(webhooks.router)
 
 
