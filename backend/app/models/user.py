@@ -7,6 +7,15 @@ from sqlmodel import Column, DateTime, Field, SQLModel
 class CreditCardNetwork(StrEnum):
     VISA = 'visa'
     MASTERCARD = 'mastercard'
+    AMEX = 'amex'
+    DISCOVER = 'discover'
+    JCB = 'jcb'
+    DINERS = 'diners'
+    UNIONPAY = 'unionpay'
+    EFTPOS_AU = 'eftpos_au'
+    INTERAC = 'interac'
+    LINK = 'link'
+    UNKNOWN = 'unknown'
 
 
 class User(SQLModel, table=True):
@@ -33,7 +42,7 @@ class User(SQLModel, table=True):
     stripe_customer_id: str | None = Field(unique=True)
     stripe_payment_method_id: str | None = Field(unique=True)
     payment_method_network: CreditCardNetwork | None
-    payment_method_last4: int | None
+    payment_method_last4: str | None = Field(default=None, max_length=4)
 
     # Stripe Recipient Metadata
     stripe_account_id: str | None = Field(unique=True)

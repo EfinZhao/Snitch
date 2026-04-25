@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from sqlmodel import SQLModel
 
 from app.api.main import api_router
+from app.core import stripe_client  # noqa: F401
 from app.core.database import engine
 
 

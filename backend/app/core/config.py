@@ -10,5 +10,14 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str
 
+    STRIPE_SECRET_KEY: str = ''
+    STRIPE_WEBHOOK_SECRET: str = ''
+
+    JWT_SECRET_KEY: str = 'dev-only-change-me'
+    JWT_ALGORITHM: str = 'HS256'
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
+
+    FRONTEND_BASE_URL: str = 'http://localhost:5173'
+
 
 settings = Settings()  # type: ignore
