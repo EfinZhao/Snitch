@@ -6,6 +6,10 @@ class SetupIntentResponse(BaseModel):
     customer_id: str
 
 
+class ConfirmSetupBody(BaseModel):
+    setup_intent_id: str
+
+
 class OnboardingLinkResponse(BaseModel):
     url: str
 
