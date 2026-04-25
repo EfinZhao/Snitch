@@ -2,6 +2,7 @@ import { useState } from 'react'
 import FocusDashboard from './components/screens/FocusDashboard'
 import FocusStats from './components/screens/FocusStats'
 import FocusStakes from './components/screens/FocusStakes'
+import DistractionMonitor from './components/screens/DistractionMonitor'
 import type { Screen } from './types'
 
 const NAV = [
@@ -27,6 +28,16 @@ const NAV = [
     ),
   },
   {
+    id: 'monitor' as Screen,
+    label: 'Monitor',
+    icon: (
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+        <circle cx="12" cy="13" r="4" />
+      </svg>
+    ),
+  },
+  {
     id: 'settings' as Screen,
     label: 'Settings',
     icon: (
@@ -42,7 +53,8 @@ const NAV = [
 const NAV_ACTIVE: Record<Screen, Screen> = {
   dashboard: 'dashboard',
   stats: 'stats',
-  stakes: 'stakes',
+  stakes: 'stats',
+  monitor: 'monitor',
   settings: 'settings',
 }
 
@@ -67,17 +79,6 @@ export default function App() {
           border-b border-outline-variant bg-surface
           sticky top-0 z-40
         ">
-          <button
-            className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface-container transition-colors"
-            aria-label="Menu"
-          >
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" className="text-on-surface-variant">
-              <line x1="3" y1="5" x2="17" y2="5" />
-              <line x1="3" y1="10" x2="17" y2="10" />
-              <line x1="3" y1="15" x2="17" y2="15" />
-            </svg>
-          </button>
-
           <span className="font-display font-semibold text-xl text-primary italic tracking-tight select-none">
             Snitch
           </span>
@@ -98,6 +99,7 @@ export default function App() {
           {screen === 'dashboard' && <FocusDashboard navigate={navigate} />}
           {screen === 'stats'    && <FocusStats navigate={navigate} />}
           {screen === 'stakes'     && <FocusStakes navigate={navigate} />}
+          {screen === 'monitor'   && <DistractionMonitor navigate={navigate} />}
           {screen === 'settings'  && (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-on-surface-variant">
               <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="opacity-40">

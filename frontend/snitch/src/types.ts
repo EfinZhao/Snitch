@@ -1,1 +1,1 @@
-export type Screen = 'dashboard' | 'stats' | 'stakes' | 'settings'
+export type Screen = 'dashboard' | 'stats' | 'stakes' | 'settings' | 'monitor'
