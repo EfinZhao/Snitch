@@ -32,3 +32,10 @@ class UserSearchResult(BaseModel):
     username: str
 
     model_config = {'from_attributes': True}
+
+
+class DiscordAccountStatus(BaseModel):
+    exists: bool
+    user_id: int | None
+    payment_method_ready: bool
+    payout_ready: bool

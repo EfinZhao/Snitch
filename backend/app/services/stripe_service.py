@@ -50,9 +50,9 @@ async def create_onboarding_link(account_id: str) -> str:
     return link.url
 
 
-async def handle_setup_intent_succeeded(session: AsyncSession, setup_intent: dict) -> None:
-    customer_id = setup_intent.get('customer')
-    payment_method_id = setup_intent.get('payment_method')
+async def handle_setup_intent_succeeded(session: AsyncSession, setup_intent) -> None:
+    customer_id = getattr(setup_intent, 'customer', None)
+    payment_method_id = getattr(setup_intent, 'payment_method', None)
     if not customer_id or not payment_method_id:
         return
 
@@ -81,8 +81,8 @@ async def handle_setup_intent_succeeded(session: AsyncSession, setup_intent: dic
     )
 
 
-async def handle_account_updated(session: AsyncSession, account: dict) -> None:
-    account_id = account.get('id')
+async def handle_account_updated(session: AsyncSession, account) -> None:
+    account_id = getattr(account, 'id', None)
     if not account_id:
         return
 
@@ -91,6 +91,6 @@ async def handle_account_updated(session: AsyncSession, account: dict) -> None:
     if user is None:
         return
 
-    user.stripe_account_enabled = account.get('charges_enabled', False) and account.get('payouts_enabled', False)
+    user.stripe_account_enabled = getattr(account, 'charges_enabled', False) and getattr(account, 'payouts_enabled', False)
     session.add(user)
     await session.commit()

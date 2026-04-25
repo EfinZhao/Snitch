@@ -9,6 +9,8 @@ const flaggedCount = document.getElementById("flaggedCount");
 const todayCount = document.getElementById("todayCount");
 const streakCount = document.getElementById("streakCount");
 const siteCountBadge = document.getElementById("siteCountBadge");
+const blockToggle = document.getElementById("blockToggle");
+const toggleLabel = document.getElementById("toggleLabel");
 
 function normalizeDomain(raw) {
   let d = raw.trim().toLowerCase();
@@ -166,13 +168,16 @@ function renderVisits(visitLog) {
 }
 
 function loadAll() {
-  chrome.storage.local.get(["blocklist", "visitLog"], (result) => {
+  chrome.storage.local.get(["blocklist", "visitLog", "blockingEnabled"], (result) => {
     const blocklist = result.blocklist || [];
     const visitLog = result.visitLog || [];
 
     updateStats(blocklist, visitLog);
     renderSites(blocklist);
     renderVisits(visitLog);
+
+    blockToggle.checked = !!result.blockingEnabled;
+    toggleLabel.textContent = result.blockingEnabled ? "Blocking" : "Block";
   });
 }
 
@@ -222,6 +227,12 @@ function removeSite(domain) {
 addBtn.addEventListener("click", addSite);
 siteInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") addSite();
+});
+
+blockToggle.addEventListener("change", () => {
+  const enabled = blockToggle.checked;
+  chrome.storage.local.set({ blockingEnabled: enabled });
+  toggleLabel.textContent = enabled ? "Blocking" : "Block";
 });
 
 siteInput.addEventListener("focus", () => {

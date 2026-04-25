@@ -6,7 +6,7 @@ from app.api.deps import CurrentUserDep
 from app.core.database import SessionDep
 from app.core.security import hash_password
 from app.models.user import User
-from app.schemas.user import UserCreate, UserRead, UserSearchResult
+from app.schemas.user import DiscordAccountStatus, UserCreate, UserRead, UserSearchResult
 
 router = APIRouter()
 
@@ -32,6 +32,20 @@ async def create_user(body: UserCreate, session: SessionDep):
 @router.get('/me', response_model=UserRead)
 async def get_me(user: CurrentUserDep):
     return UserRead.model_validate(user)
+
+
+@router.get('/discord/{discord_uid}', response_model=DiscordAccountStatus)
+async def get_discord_account_status(discord_uid: int, session: SessionDep):
+    result = await session.exec(select(User).where(User.discord_uid == discord_uid))
+    user = result.first()
+    if user is None:
+        return DiscordAccountStatus(exists=False, user_id=None, payment_method_ready=False, payout_ready=False)
+    return DiscordAccountStatus(
+        exists=True,
+        user_id=user.id,
+        payment_method_ready=user.stripe_payment_method_id is not None,
+        payout_ready=user.stripe_account_enabled,
+    )
 
 
 @router.get('/search', response_model=list[UserSearchResult])

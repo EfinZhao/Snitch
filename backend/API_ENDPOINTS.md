@@ -95,7 +95,7 @@ Request body:
   "email": "alice@example.com",
   "password": "supersecret",
   "username": "alice",
-  "discord_uid": 123456789012345678
+  "discord_uid": 123456789012345678 // This is an optional field
 }
 ```
 

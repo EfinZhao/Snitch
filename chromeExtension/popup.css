@@ -115,7 +115,7 @@ body::-webkit-scrollbar-thumb {
 .header {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   padding: 14px 16px 12px;
   border-bottom: 1px solid var(--outline-variant);
   background: var(--surface);
@@ -558,6 +558,66 @@ body::-webkit-scrollbar-thumb {
   border-top: 1px solid var(--outline-variant);
   margin-top: auto;
   letter-spacing: 0.03em;
+}
+
+/* ─── Block toggle ─── */
+.block-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.block-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-track {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: var(--outline-variant);
+  border-radius: var(--radius-full);
+  transition: background var(--transition-base);
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: var(--surface);
+  border-radius: var(--radius-full);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: transform var(--transition-base);
+}
+
+.block-toggle input:checked ~ .toggle-track {
+  background: var(--error);
+}
+
+.block-toggle input:checked ~ .toggle-track .toggle-thumb {
+  transform: translateX(16px);
+  background: #fff;
+}
+
+.toggle-label {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--outline);
+  transition: color var(--transition-base);
+}
+
+.block-toggle input:checked ~ .toggle-label {
+  color: var(--error);
 }
 
 /* ─── Utility: hatch pattern (from web app) ─── */
