@@ -12,6 +12,10 @@ class UserCreate(BaseModel):
     discord_uid: int | None = None
 
 
+class DiscordLinkRequest(BaseModel):
+    discord_uid: int
+
+
 class UserRead(BaseModel):
     id: int
     email: str

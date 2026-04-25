@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import Button from '../atoms/Button'
 import StripeCardForm from '../StripeCardForm'
-import { apiPost, apiPostForm, ApiError } from '../../api/client'
+import { apiPatch, apiPost, apiPostForm, ApiError } from '../../api/client'
 
 type Mode = 'signin' | 'signup'
 type Step = 'auth' | 'card' | 'redirecting'
@@ -19,7 +19,16 @@ const INPUT_CLASS = [
 
 const LABEL_CLASS = 'font-body text-xs font-semibold text-on-surface-variant uppercase tracking-wide'
 
+function parseDiscordUidFromUrl(): string | null {
+  const params = new URLSearchParams(window.location.search)
+  const raw = params.get('discord_uid') ?? params.get('discordId') ?? params.get('uid')
+  if (!raw) return null
+  if (!/^\d+$/.test(raw)) return null
+  return raw
+}
+
 export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
+  const discordUid = parseDiscordUidFromUrl()
   const [mode, setMode] = useState<Mode>('signin')
   const [step, setStep] = useState<Step>('auth')
   const [email, setEmail] = useState('')
@@ -44,7 +53,12 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
     try {
       if (mode === 'signup') {
-        await apiPost('/users', { email, password, username })
+        await apiPost('/users', {
+          email,
+          password,
+          username,
+          ...(discordUid ? { discord_uid: discordUid } : {}),
+        })
       }
 
       const { access_token } = await apiPostForm<{ access_token: string; token_type: string }>(
@@ -53,6 +67,10 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       )
 
       localStorage.setItem('snitch_token', access_token)
+
+      if (discordUid) {
+        await apiPatch('/users/me/discord-link', { discord_uid: discordUid }, access_token)
+      }
 
       if (mode === 'signup') {
         // Create Stripe Customer and get client_secret for card collection
@@ -69,8 +87,15 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       }
     } catch (err) {
       if (err instanceof ApiError) {
-        if (err.status === 409) setError('That email or username is already taken.')
+        if (err.status === 409) {
+          if (err.message.toLowerCase().includes('discord')) {
+            setError('This Discord account is already linked to another Snitch account.')
+          } else {
+            setError('That email or username is already taken.')
+          }
+        }
         else if (err.status === 401) setError('Incorrect email or password.')
+        else if (err.status === 422) setError('The Discord link is invalid. Please retry from Discord.')
         else setError(err.message)
       } else {
         setError('Something went wrong. Please try again.')
