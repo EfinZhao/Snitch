@@ -6,7 +6,7 @@ from app.api.deps import CurrentUserDep
 from app.core.database import SessionDep
 from app.core.security import hash_password
 from app.models.user import User
-from app.schemas.user import DiscordAccountStatus, UserCreate, UserRead, UserSearchResult
+from app.schemas.user import DiscordAccountStatus, DiscordLinkRequest, UserCreate, UserRead, UserSearchResult
 
 router = APIRouter()
 
@@ -24,13 +24,33 @@ async def create_user(body: UserCreate, session: SessionDep):
         await session.commit()
     except IntegrityError:
         await session.rollback()
-        raise HTTPException(status_code=409, detail='Email or username already taken')
+        raise HTTPException(status_code=409, detail='Email, username, or Discord account already taken')
     await session.refresh(user)
     return UserRead.model_validate(user)
 
 
 @router.get('/me', response_model=UserRead)
 async def get_me(user: CurrentUserDep):
+    return UserRead.model_validate(user)
+
+
+@router.patch('/me/discord-link', response_model=UserRead)
+async def link_discord_account(body: DiscordLinkRequest, user: CurrentUserDep, session: SessionDep):
+    if body.discord_uid <= 0:
+        raise HTTPException(status_code=422, detail='discord_uid must be a positive integer')
+
+    if user.discord_uid == body.discord_uid:
+        return UserRead.model_validate(user)
+
+    result = await session.exec(select(User).where(User.discord_uid == body.discord_uid).where(User.id != user.id))
+    existing = result.first()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail='This Discord account is already linked to another user')
+
+    user.discord_uid = body.discord_uid
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
     return UserRead.model_validate(user)
 
 

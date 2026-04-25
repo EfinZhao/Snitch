@@ -30,8 +30,10 @@ All currently implemented endpoints:
 |---|---|---|---|
 | GET | `/api/health` | No | Health check |
 | POST | `/api/auth/login` | No | OAuth2 password form (`username` = email) |
+| POST | `/api/auth/discord-login/{discord_uid}` | No | Discord-linked login with Stripe readiness checks |
 | POST | `/api/users` | No | Create account |
 | GET | `/api/users/me` | Yes | Current user profile |
+| PATCH | `/api/users/me/discord-link` | Yes | Link current account to a Discord user ID |
 | GET | `/api/users/discord/{discord_uid}` | No | Discord-linked account status |
 | GET | `/api/users/search?q=<prefix>` | Yes | User search (up to 10 results) |
 | POST | `/api/stakes` | Yes | Create stake |
@@ -76,6 +78,30 @@ Example response:
 
 ---
 
+## Users
+
+### PATCH /api/users/me/discord-link
+
+Links the authenticated Snitch account to a Discord user ID.
+
+Request body:
+- `discord_uid` (integer, required)
+
+Example:
+
+```bash
+curl -X PATCH http://localhost:8000/api/users/me/discord-link \
+  -H "Authorization: Bearer <jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"discord_uid":123456789012345678}'
+```
+
+Common errors:
+- `409`: Discord account already linked to another user
+- `422`: Invalid Discord ID payload
+
+---
+
 ## Auth
 
 ### POST /api/auth/login
@@ -109,6 +135,35 @@ Example response:
 
 Common errors:
 - `401`: Incorrect email or password
+
+### POST /api/auth/discord-login/{discord_uid}
+
+Issues a JWT for a Discord-linked Snitch user.
+
+Validation rules:
+- A Snitch account must exist for the provided Discord user ID.
+- The account must have a Stripe customer + saved payment method.
+- The account must have a Stripe Connect account with payouts enabled.
+
+Example:
+
+```bash
+curl -X POST http://localhost:8000/api/auth/discord-login/123456789012345678
+```
+
+Example response:
+
+```json
+{
+  "access_token": "<jwt>",
+  "token_type": "bearer"
+}
+```
+
+Common errors:
+- `404`: No Snitch account linked to this Discord user
+- `400`: Stripe payment setup incomplete
+- `400`: Stripe payout setup incomplete
 
 ---
 

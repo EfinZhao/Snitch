@@ -1,5 +1,6 @@
 import os
 from typing import Any, Optional
+from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 
 import aiohttp
 import discord
@@ -19,6 +20,12 @@ class AuthClient:
         self.frontend_signup_url = os.getenv("FRONTEND_SIGNUP_URL", "http://localhost:5173")
         self.frontend_payment_setup_url = os.getenv("FRONTEND_PAYMENT_SETUP_URL", "http://localhost:5173")
         self._token_cache_by_discord_uid: dict[int, str] = {}
+
+    def signup_url_with_discord_uid(self, discord_uid: int) -> str:
+        split = urlsplit(self.frontend_signup_url)
+        query = dict(parse_qsl(split.query, keep_blank_values=True))
+        query["discord_uid"] = str(discord_uid)
+        return urlunsplit((split.scheme, split.netloc, split.path, urlencode(query), split.fragment))
 
     async def get_discord_account_status(
         self, discord_uid: int
@@ -84,7 +91,7 @@ class AuthClient:
                 False,
                 (
                     "No Snitch account is linked to your Discord yet.\n"
-                    f"Create one here: {self.frontend_signup_url}"
+                    f"Create one here: {self.signup_url_with_discord_uid(discord_uid)}"
                 ),
                 None,
                 discord_account_status,
