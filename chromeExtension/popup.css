@@ -560,6 +560,108 @@ body::-webkit-scrollbar-thumb {
   letter-spacing: 0.03em;
 }
 
+/* ─── Header right group ─── */
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ─── Logout button ─── */
+.logout-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--outline);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.logout-btn:hover {
+  color: var(--error);
+  background: var(--error-container);
+}
+
+/* ─── Login view ─── */
+.login-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px 24px;
+  gap: 6px;
+}
+
+.login-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--primary-fixed);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+  color: var(--primary);
+}
+
+.login-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+
+.login-subtitle {
+  font-size: 12px;
+  color: var(--outline);
+  margin-bottom: 12px;
+}
+
+.login-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.login-form .input-wrapper input {
+  width: 100%;
+  padding: 10px 12px 10px 32px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--outline-variant);
+  background: var(--surface-low);
+  color: var(--on-surface);
+  font-family: var(--font-body);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.login-form .input-wrapper input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.login-form .input-wrapper input::placeholder {
+  color: var(--outline);
+}
+
+.login-btn {
+  width: 100%;
+  padding: 11px 14px !important;
+  margin-top: 4px;
+  justify-content: center;
+}
+
+.login-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
 /* ─── Block toggle ─── */
 .block-toggle {
   display: flex;

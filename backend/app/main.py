@@ -22,7 +22,11 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.FRONTEND_BASE_URL],
+    allow_origins=[
+        settings.FRONTEND_BASE_URL,
+        'chrome-extension://*',
+    ],
+    allow_origin_regex=r'^chrome-extension://.*$',
     allow_credentials=True,
     allow_methods=['*'],
     allow_headers=['*'],

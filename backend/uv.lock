@@ -110,6 +110,7 @@ dependencies = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "fastapi", specifier = ">=0.136.1" },
+    { name = "greenlet", specifier = ">=3.0.0" },
     { name = "greenlet", specifier = ">=3.4.0" },
     { name = "pwdlib", extras = ["argon2"], specifier = ">=0.3.0" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.13.3" },
