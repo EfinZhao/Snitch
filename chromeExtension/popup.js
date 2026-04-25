@@ -183,7 +183,7 @@ function updateSessionUI(activeSession) {
   if (activeSession) {
     sessionBanner.classList.remove("hidden");
     blockToggleWrap.classList.add("locked");
-    blockToggle.checked = true;
+    blockToggle.checked = false;
     toggleLabel.textContent = "Locked";
   } else {
     sessionBanner.classList.add("hidden");

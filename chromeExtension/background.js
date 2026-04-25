@@ -101,7 +101,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 function shouldBlock(result) {
-  return result.blockingEnabled || result.activeSession;
+  if (result.activeSession) return false;
+  return result.blockingEnabled;
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -119,9 +120,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       reportDistraction(hostname, tab.url, result.authToken);
 
       if (shouldBlock(result)) {
-        const reason = result.activeSession ? "session" : "manual";
         const blockedUrl = chrome.runtime.getURL(
-          `blocked.html?site=${encodeURIComponent(hostname)}&reason=${reason}`
+          `blocked.html?site=${encodeURIComponent(hostname)}`
         );
         if (tab.url !== blockedUrl) {
           chrome.tabs.update(tabId, { url: blockedUrl });

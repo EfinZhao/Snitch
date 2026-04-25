@@ -86,7 +86,7 @@
     </div>
     <h1 class="blocked-title">Site Blocked</h1>
     <span class="blocked-site" id="blockedSite"></span>
-    <p class="blocked-message" id="blockedMessage">
+    <p class="blocked-message">
       This site is on your flagged list and blocking is enabled.<br />
       Stay focused — you've got this.
     </p>
@@ -96,14 +96,8 @@
   <script>
     const params = new URLSearchParams(window.location.search);
     const site = params.get("site") || "Unknown site";
-    const reason = params.get("reason");
     document.getElementById("blockedSite").textContent = site;
     document.title = `Blocked: ${site} — Snitch`;
-
-    if (reason === "session") {
-      document.getElementById("blockedMessage").innerHTML =
-        "You have an active focus session.<br />This site is blocked until your session ends.";
-    }
   </script>
 </body>
 </html>
