@@ -2,6 +2,7 @@ import { useState } from 'react'
 import FocusDashboard from './components/screens/FocusDashboard'
 import FocusStats from './components/screens/FocusStats'
 import DistractionMonitor from './components/screens/DistractionMonitor'
+import AuthScreen from './components/screens/AuthScreen'
 import type { Screen } from './types'
 
 const NAV = [
@@ -48,7 +49,6 @@ const NAV = [
   },
 ]
 
-// Which nav item should appear active for each screen
 const NAV_ACTIVE: Record<Screen, Screen> = {
   dashboard: 'dashboard',
   stats: 'stats',
@@ -56,21 +56,63 @@ const NAV_ACTIVE: Record<Screen, Screen> = {
   settings: 'settings',
 }
 
+// Stripe /connect/return (and /connect/refresh) from the URL on first load
+// so the SPA lands on the dashboard instead of a dead route.
+function resolveInitialPath(): boolean {
+  const { pathname } = window.location
+  if (pathname === '/connect/return' || pathname === '/connect/refresh') {
+    window.history.replaceState(null, '', '/')
+    return true
+  }
+  return false
+}
+
+const CAME_FROM_STRIPE = resolveInitialPath()
+
+const OUTER = `
+  h-dvh bg-surface-dim flex justify-center sm:py-8 lg:py-0
+`.trim()
+
+const INNER = `
+  flex flex-col w-full h-full
+  sm:max-w-[480px] sm:rounded-2xl sm:overflow-hidden
+  sm:shadow-[0_8px_40px_-8px_rgba(0,0,0,0.18)]
+  lg:max-w-full lg:rounded-none lg:shadow-none
+  bg-surface
+`.trim()
+
 export default function App() {
+  const [token, setToken] = useState<string | null>(() => {
+    // If returning from Stripe, the token was stored before redirect
+    if (CAME_FROM_STRIPE) return localStorage.getItem('snitch_token')
+    return localStorage.getItem('snitch_token')
+  })
+
   const [screen, setScreen] = useState<Screen>('dashboard')
 
   const navigate = (s: Screen) => setScreen(s)
 
+  function handleAuthenticated(newToken: string) {
+    localStorage.setItem('snitch_token', newToken)
+    setToken(newToken)
+  }
+
+  // ── Auth gate ──────────────────────────────────────────────────────────────
+  if (!token) {
+    return (
+      <div className={OUTER}>
+        <div className={INNER}>
+          <AuthScreen onAuthenticated={handleAuthenticated} />
+        </div>
+      </div>
+    )
+  }
+
+  // ── Main app ───────────────────────────────────────────────────────────────
   return (
-    <div className="h-dvh bg-surface-dim flex justify-center sm:py-8 lg:py-0">
-      <div className="
-        flex flex-col w-full h-full
-        sm:max-w-[480px] sm:rounded-2xl sm:overflow-hidden
-        sm:shadow-[0_8px_40px_-8px_rgba(0,0,0,0.18)]
-        lg:max-w-full lg:rounded-none lg:shadow-none
-        bg-surface
-      ">
-        {/* ── Shared header ── */}
+    <div className={OUTER}>
+      <div className={INNER}>
+        {/* Shared header */}
         <header className="
           flex items-center justify-between
           px-5 pt-5 pb-3
@@ -84,6 +126,10 @@ export default function App() {
           <button
             className="w-9 h-9 rounded-full border border-outline-variant bg-surface-container flex items-center justify-center hover:bg-surface-high transition-colors"
             aria-label="Profile"
+            onClick={() => {
+              localStorage.removeItem('snitch_token')
+              setToken(null)
+            }}
           >
             <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="text-on-surface-variant">
               <circle cx="10" cy="7" r="3.5" />
@@ -92,10 +138,10 @@ export default function App() {
           </button>
         </header>
 
-        {/* ── Screen content ── */}
+        {/* Screen content */}
         <main className="flex-1 overflow-y-auto">
           {screen === 'dashboard' && <FocusDashboard navigate={navigate} />}
-          {screen === 'stats'    && <FocusStats navigate={navigate} />}
+          {screen === 'stats'     && <FocusStats navigate={navigate} />}
           {screen === 'monitor'   && <DistractionMonitor navigate={navigate} />}
           {screen === 'settings'  && (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-on-surface-variant">
@@ -108,7 +154,7 @@ export default function App() {
           )}
         </main>
 
-        {/* ── Shared bottom nav ── */}
+        {/* Bottom nav */}
         <nav className="
           flex-shrink-0
           border-t border-outline-variant bg-surface
@@ -120,7 +166,7 @@ export default function App() {
             return (
               <button
                 key={id}
-                onClick={() => id !== 'settings' || screen !== 'settings' ? navigate(id) : undefined}
+                onClick={() => navigate(id)}
                 className={[
                   'flex-1 flex flex-col items-center py-3 gap-0.5',
                   'text-xs font-body font-semibold uppercase tracking-wide',

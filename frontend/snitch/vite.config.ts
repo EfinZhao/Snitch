@@ -8,4 +8,6 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['@mediapipe/tasks-vision'],
   },
+  // Serve index.html for all routes so /connect/return lands in the SPA
+  appType: 'spa',
 })

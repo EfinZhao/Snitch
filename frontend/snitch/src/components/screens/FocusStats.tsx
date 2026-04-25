@@ -40,12 +40,8 @@ export default function FocusStats({ navigate }: { navigate: (screen: Screen) =>
         {/* Page title + tagline */}
         <div>
           <h1 className="font-display font-semibold text-4xl text-on-surface leading-tight">
-            Focus Dashboard
+            Your Stats
           </h1>
-          <p className="font-body italic text-sm text-on-surface-variant mt-1 leading-snug">
-            "I see you've scheduled 4 hours of 'studying' today. Let's see if
-            you actually open the textbook this time."
-          </p>
         </div>
 
         <Card>
@@ -58,7 +54,7 @@ export default function FocusStats({ navigate }: { navigate: (screen: Screen) =>
                 $420{" "}
               </p>
               <p className="font-body text-xs text-on-surface-variant mt-2">
-                Just by locking in. Wow!
+                Maybe locking in is worth it after all?
               </p>
             </div>
             <span className="text-2xl">💰</span>
@@ -78,8 +74,8 @@ export default function FocusStats({ navigate }: { navigate: (screen: Screen) =>
                   to your friends
                 </span>
               </p>
-              <p className="font-body text-xs text-error mt-2 font-semibold">
-                How kind. Now stop scrolling.
+              <p className="font-body text-xs text-error mt-2">
+                How kind. <span className="font-semibold">Now stop scrolling.</span>
               </p>
             </div>
             <span className="text-2xl">⚠️</span>
@@ -96,7 +92,7 @@ export default function FocusStats({ navigate }: { navigate: (screen: Screen) =>
               <p className="font-display font-semibold text-3xl text-on-surface mt-0.5">
                 3{" "}
                 <span className="text-sm font-body font-normal text-on-surface-variant">
-                  days
+                  days without distractions
                 </span>
               </p>
               <p className="font-body text-xs text-on-surface-variant mt-2">
