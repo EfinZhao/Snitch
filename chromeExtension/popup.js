@@ -14,6 +14,7 @@ const siteCountBadge = document.getElementById("siteCountBadge");
 const blockToggle = document.getElementById("blockToggle");
 const blockToggleWrap = document.getElementById("blockToggleWrap");
 const toggleLabel = document.getElementById("toggleLabel");
+const sessionBanner = document.getElementById("sessionBanner");
 
 const loginView = document.getElementById("loginView");
 const mainView = document.getElementById("mainView");
@@ -178,8 +179,20 @@ function renderVisits(visitLog) {
   });
 }
 
+function updateSessionUI(activeSession) {
+  if (activeSession) {
+    sessionBanner.classList.remove("hidden");
+    blockToggleWrap.classList.add("locked");
+    blockToggle.checked = true;
+    toggleLabel.textContent = "Locked";
+  } else {
+    sessionBanner.classList.add("hidden");
+    blockToggleWrap.classList.remove("locked");
+  }
+}
+
 function loadAll() {
-  chrome.storage.local.get(["blocklist", "visitLog", "blockingEnabled"], (result) => {
+  chrome.storage.local.get(["blocklist", "visitLog", "blockingEnabled", "activeSession"], (result) => {
     const blocklist = result.blocklist || [];
     const visitLog = result.visitLog || [];
 
@@ -187,8 +200,13 @@ function loadAll() {
     renderSites(blocklist);
     renderVisits(visitLog);
 
-    blockToggle.checked = !!result.blockingEnabled;
-    toggleLabel.textContent = result.blockingEnabled ? "Blocking" : "Block";
+    const isSession = !!result.activeSession;
+    updateSessionUI(isSession);
+
+    if (!isSession) {
+      blockToggle.checked = !!result.blockingEnabled;
+      toggleLabel.textContent = result.blockingEnabled ? "Blocking" : "Block";
+    }
   });
 }
 

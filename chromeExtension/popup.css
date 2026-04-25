@@ -722,6 +722,29 @@ body::-webkit-scrollbar-thumb {
   color: var(--error);
 }
 
+/* ─── Active session banner ─── */
+.session-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--error-container);
+  color: var(--on-error-container);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  animation: slideIn 0.2s ease;
+}
+
+.session-banner svg {
+  flex-shrink: 0;
+}
+
+.block-toggle.locked {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 /* ─── Utility: hatch pattern (from web app) ─── */
 .hatch-bg {
   background-image: repeating-linear-gradient(
