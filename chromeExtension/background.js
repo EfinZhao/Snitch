@@ -47,7 +47,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (!isFlaggedSite(hostname, blocklist)) return;
 
     chrome.action.setBadgeText({ text: "!", tabId });
-    chrome.action.setBadgeBackgroundColor({ color: "#EF4444", tabId });
+    chrome.action.setBadgeBackgroundColor({ color: "#335f87", tabId });
     chrome.action.setBadgeTextColor({ color: "#FFFFFF", tabId });
 
     chrome.notifications.create(`snitch-${Date.now()}`, {
