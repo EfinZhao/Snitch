@@ -7,37 +7,95 @@
   <title>Snitch</title>
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>Snitch</h1>
-      <p class="subtitle">Distraction tracker</p>
+  <div class="popup">
+    <!-- Branded header matching web app -->
+    <header class="header">
+      <span class="wordmark">Snitch</span>
     </header>
 
-    <section class="add-site">
+    <!-- Quick stats -->
+    <section class="stats-row">
+      <div class="stat-card card-sketch">
+        <span class="stat-value" id="flaggedCount">0</span>
+        <span class="stat-label">Sites Flagged</span>
+      </div>
+      <div class="stat-card card-sketch">
+        <span class="stat-value" id="todayCount">0</span>
+        <span class="stat-label">Today's Visits</span>
+      </div>
+      <div class="stat-card stat-card--accent card-sketch">
+        <span class="stat-value" id="streakCount">0</span>
+        <span class="stat-label">Day Streak</span>
+      </div>
+    </section>
+
+    <!-- Add site -->
+    <section class="section">
+      <h2 class="section-title">Add Site</h2>
       <div class="input-row">
-        <input
-          type="text"
-          id="siteInput"
-          placeholder="e.g. example.com"
-          spellcheck="false"
-        />
-        <button id="addBtn">Add</button>
+        <div class="input-wrapper">
+          <svg class="input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="2" y1="12" x2="22" y2="12" />
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z" />
+          </svg>
+          <input
+            type="text"
+            id="siteInput"
+            placeholder="e.g. youtube.com"
+            spellcheck="false"
+            autocomplete="off"
+          />
+        </div>
+        <button id="addBtn" class="btn-primary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          ADD
+        </button>
       </div>
       <p id="inputError" class="error hidden"></p>
     </section>
 
-    <section class="panel">
-      <h2>Flagged Sites</h2>
+    <!-- Flagged sites -->
+    <section class="section">
+      <div class="section-header">
+        <h2 class="section-title">Flagged Sites</h2>
+        <span class="section-badge" id="siteCountBadge">0</span>
+      </div>
       <ul id="siteList" class="site-list"></ul>
-      <p id="emptyMsg" class="empty-msg hidden">No flagged sites yet.</p>
+      <div id="emptyMsg" class="empty-state hidden">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" class="empty-icon">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        </svg>
+        <p>No flagged sites yet</p>
+        <span>Add distracting sites above to start tracking</span>
+      </div>
     </section>
 
-    <section class="panel">
-      <h2>Recent Visits</h2>
+    <!-- Recent activity -->
+    <section class="section">
+      <div class="section-header">
+        <h2 class="section-title">Recent Activity</h2>
+      </div>
       <ul id="visitList" class="visit-list"></ul>
-      <p id="emptyVisits" class="empty-msg hidden">No visits logged yet.</p>
+      <div id="emptyVisits" class="empty-state hidden">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" class="empty-icon">
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+        </svg>
+        <p>No visits logged yet</p>
+        <span>Visits to flagged sites will appear here</span>
+      </div>
     </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      Snitch v1.0.0
+    </footer>
   </div>
+
   <script src="popup.js"></script>
 </body>
 </html>
