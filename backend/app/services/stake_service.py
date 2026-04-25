@@ -10,6 +10,7 @@ from app.models.user import User
 from app.schemas.stake import (
     DistractionReport,
     StakeCreate,
+    StakeRecipientAdd,
     StakeRead,
     StakeRecipientRead,
     StakeResolve,
@@ -60,20 +61,46 @@ async def create_stake(session: AsyncSession, creator: User, body: StakeCreate) 
             detail='You must have a saved payment method before creating a stake',
         )
 
-    usernames = [u.lower() for u in body.recipient_usernames]
-    if creator.username.lower() in usernames:
-        raise HTTPException(status_code=400, detail='You cannot add yourself as a recipient')
+    recipient_by_id: dict[int, User] = {}
 
-    result = await session.exec(select(User).where(col(User.username).in_(usernames)))
-    found_users = result.all()
-    found_map = {u.username.lower(): u for u in found_users}
+    usernames = [u.strip().lower() for u in body.recipient_usernames if u.strip()]
+    if usernames:
+        if creator.username.lower() in usernames:
+            raise HTTPException(status_code=400, detail='You cannot add yourself as a recipient')
+        result = await session.exec(select(User).where(col(User.username).in_(usernames)))
+        found_users = result.all()
+        found_map = {u.username.lower(): u for u in found_users}
 
-    missing = [u for u in usernames if u not in found_map]
-    if missing:
-        raise HTTPException(
-            status_code=404,
-            detail=f'Users not found: {", ".join(missing)}',
-        )
+        missing = [u for u in usernames if u not in found_map]
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f'Users not found: {", ".join(missing)}',
+            )
+        for username in usernames:
+            user = found_map[username]
+            recipient_by_id[user.id] = user  # type: ignore[index]
+
+    discord_uids = list(dict.fromkeys(body.recipient_discord_uids))
+    if discord_uids:
+        if creator.discord_uid is not None and creator.discord_uid in discord_uids:
+            raise HTTPException(status_code=400, detail='You cannot add yourself as a recipient')
+        result = await session.exec(select(User).where(col(User.discord_uid).in_(discord_uids)))
+        found_users = result.all()
+        found_map = {u.discord_uid: u for u in found_users if u.discord_uid is not None}
+
+        missing = [uid for uid in discord_uids if uid not in found_map]
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f'Discord-linked users not found for UIDs: {", ".join(str(uid) for uid in missing)}',
+            )
+        for discord_uid in discord_uids:
+            user = found_map[discord_uid]
+            recipient_by_id[user.id] = user  # type: ignore[index]
+
+    if not recipient_by_id:
+        raise HTTPException(status_code=422, detail='at least one recipient is required')
 
     stake = Stake(
         creator_id=creator.id,  # type: ignore[arg-type]
@@ -83,14 +110,54 @@ async def create_stake(session: AsyncSession, creator: User, body: StakeCreate) 
     session.add(stake)
     await session.flush()
 
-    for username in usernames:
-        recipient_user = found_map[username]
+    for recipient_user in recipient_by_id.values():
         sr = StakeRecipient(
             stake_id=stake.id,  # type: ignore[arg-type]
             recipient_id=recipient_user.id,  # type: ignore[arg-type]
         )
         session.add(sr)
 
+    await session.commit()
+    await session.refresh(stake)
+    return await _build_stake_read(session, stake)
+
+
+async def add_stake_recipient(
+    session: AsyncSession, stake_id: int, user: User, body: StakeRecipientAdd
+) -> StakeRead:
+    stake = await session.get(Stake, stake_id)
+    if stake is None:
+        raise HTTPException(status_code=404, detail='Stake not found')
+    if stake.creator_id != user.id:
+        raise HTTPException(status_code=403, detail='Only the creator can add recipients')
+    if stake.status != StakeStatus.PENDING:
+        raise HTTPException(status_code=400, detail='Can only add recipients to a pending stake')
+
+    result = await session.exec(select(StakeRecipient).where(StakeRecipient.stake_id == stake.id))
+    existing_rows = result.all()
+    existing_recipient_ids = {row.recipient_id for row in existing_rows}
+
+    target_user: User | None = None
+    if body.recipient_discord_uid is not None:
+        result = await session.exec(select(User).where(User.discord_uid == body.recipient_discord_uid))
+        target_user = result.first()
+    elif body.recipient_username:
+        result = await session.exec(select(User).where(User.username == body.recipient_username.lower()))
+        target_user = result.first()
+
+    if target_user is None:
+        raise HTTPException(status_code=404, detail='Recipient user not found')
+    if target_user.id == user.id:
+        raise HTTPException(status_code=400, detail='You cannot add yourself as a recipient')
+    if target_user.id in existing_recipient_ids:
+        return await _build_stake_read(session, stake)
+
+    session.add(
+        StakeRecipient(
+            stake_id=stake.id,  # type: ignore[arg-type]
+            recipient_id=target_user.id,  # type: ignore[arg-type]
+        )
+    )
     await session.commit()
     await session.refresh(stake)
     return await _build_stake_read(session, stake)

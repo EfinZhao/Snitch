@@ -3,7 +3,14 @@ from fastapi import APIRouter, Query
 from app.api.deps import CurrentUserDep
 from app.core.database import SessionDep
 from app.models.stake import StakeStatus
-from app.schemas.stake import DistractionReport, StakeCreate, StakeRead, StakeResolve, StakeUpdate
+from app.schemas.stake import (
+    DistractionReport,
+    StakeCreate,
+    StakeRead,
+    StakeRecipientAdd,
+    StakeResolve,
+    StakeUpdate,
+)
 from app.services import stake_service
 
 router = APIRouter()
@@ -41,6 +48,11 @@ async def get_stake(stake_id: int, session: SessionDep, user: CurrentUserDep):
 @router.post('/{stake_id}/activate', response_model=StakeRead)
 async def activate_stake(stake_id: int, session: SessionDep, user: CurrentUserDep):
     return await stake_service.activate_stake(session, stake_id, user)
+
+
+@router.post('/{stake_id}/recipients', response_model=StakeRead)
+async def add_recipient(stake_id: int, body: StakeRecipientAdd, session: SessionDep, user: CurrentUserDep):
+    return await stake_service.add_stake_recipient(session, stake_id, user, body)
 
 
 @router.patch('/{stake_id}', response_model=StakeRead)
