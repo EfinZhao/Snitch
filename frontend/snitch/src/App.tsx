@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import FocusDashboard from './components/screens/FocusDashboard'
 import FocusStats from './components/screens/FocusStats'
-import FocusStakes from './components/screens/FocusStakes'
 import DistractionMonitor from './components/screens/DistractionMonitor'
 import type { Screen } from './types'
 
@@ -53,7 +52,6 @@ const NAV = [
 const NAV_ACTIVE: Record<Screen, Screen> = {
   dashboard: 'dashboard',
   stats: 'stats',
-  stakes: 'stats',
   monitor: 'monitor',
   settings: 'settings',
 }
@@ -98,7 +96,6 @@ export default function App() {
         <main className="flex-1 overflow-y-auto">
           {screen === 'dashboard' && <FocusDashboard navigate={navigate} />}
           {screen === 'stats'    && <FocusStats navigate={navigate} />}
-          {screen === 'stakes'     && <FocusStakes navigate={navigate} />}
           {screen === 'monitor'   && <DistractionMonitor navigate={navigate} />}
           {screen === 'settings'  && (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-on-surface-variant">
