@@ -269,97 +269,6 @@ class GroupStartView(discord.ui.View):
         )
 
 
-class ActiveSoloJoinView(discord.ui.View):
-    def __init__(
-        self,
-        author_id: int,
-        participants_by_id: dict[int, discord.abc.User],
-        backend_api_base: str,
-        token: str,
-        stake_id: int,
-    ) -> None:
-        super().__init__(timeout=None)
-        self.author_id = author_id
-        self.participants_by_id = participants_by_id
-        self.backend_api_base = backend_api_base
-        self.token = token
-        self.stake_id = stake_id
-
-    async def _add_recipient_via_api(self, username: str) -> tuple[bool, str]:
-        headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json",
-        }
-        body = {"recipient_username": username}
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{self.backend_api_base}/stakes/{self.stake_id}/recipients",
-                json=body,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=20),
-            ) as response:
-                if response.status != 200:
-                    detail = await response.text()
-                    return False, f"Join failed ({response.status}): {detail[:200]}"
-                return True, ""
-
-    @discord.ui.button(label="Join As Recipient", style=discord.ButtonStyle.success)
-    async def join_button(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ) -> None:
-        if interaction.user.bot:
-            await interaction.response.send_message(
-                "Bots cannot join this bet.", ephemeral=True
-            )
-            return
-        if interaction.user.id == self.author_id:
-            await interaction.response.send_message(
-                "You are already included as the creator.", ephemeral=True
-            )
-            return
-
-        username = interaction.user.name.strip().lower()
-        if not username:
-            await interaction.response.send_message(
-                "Unable to determine your username for recipient add.", ephemeral=True
-            )
-            return
-
-        added, message = await self._add_recipient_via_api(username)
-        if not added:
-            await interaction.response.send_message(
-                f"Could not add you as recipient in backend. {message}",
-                ephemeral=True,
-            )
-            return
-
-        self.participants_by_id[interaction.user.id] = interaction.user
-        await interaction.response.send_message(
-            "You joined this active stake.", ephemeral=True
-        )
-
-    @discord.ui.button(label="Leave Bet", style=discord.ButtonStyle.danger)
-    async def leave_button(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ) -> None:
-        if interaction.user.id == self.author_id:
-            await interaction.response.send_message(
-                "The creator cannot leave their own bet.", ephemeral=True
-            )
-            return
-        if interaction.user.id not in self.participants_by_id:
-            await interaction.response.send_message(
-                "You are not currently in this bet.", ephemeral=True
-            )
-            return
-
-        self.participants_by_id.pop(interaction.user.id, None)
-        await interaction.response.send_message(
-            "You left this active stake.", ephemeral=True
-        )
-
-
 class General(commands.Cog, name="general"):
     def __init__(self, bot) -> None:
         self.bot = bot
@@ -368,14 +277,40 @@ class General(commands.Cog, name="general"):
         self.frontend_signup_url = os.getenv("FRONTEND_SIGNUP_URL", "http://localhost:5173")
         self.frontend_payment_setup_url = os.getenv("FRONTEND_PAYMENT_SETUP_URL", "http://localhost:5173")
 
-    async def _get_backend_token_for_discord_user(self, discord_uid: int) -> tuple[bool, str, Optional[str]]:
+    async def _get_discord_account_status(self, discord_uid: int) -> tuple[bool, str, Optional[dict[str, Any]]]:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{self.backend_api_base}/users/discord/{discord_uid}",
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as response:
+                if response.status != 200:
+                    detail = await response.text()
+                    return False, f"Could not check Discord account status ({response.status}): {detail[:250]}", None
+
+                payload: Any = await response.json()
+                if not isinstance(payload, dict):
+                    return False, "Could not parse Discord account status from backend response.", None
+                return True, "", payload
+
+    async def _get_backend_token_for_discord_user(
+        self,
+        discord_uid: int,
+        discord_account_status: Optional[dict[str, Any]] = None,
+    ) -> tuple[bool, str, Optional[str]]:
+        # New flow: attempt to read token from the Discord status payload when provided.
+        if isinstance(discord_account_status, dict):
+            status_token = discord_account_status.get("access_token") or discord_account_status.get("token")
+            if status_token:
+                return True, "", str(status_token)
+
+        # Backward-compatible fallback for environments still exposing legacy Discord login.
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{self.backend_api_base}/auth/discord-login/{discord_uid}",
                 timeout=aiohttp.ClientTimeout(total=20),
             ) as response:
                 if response.status == 404:
-                    return False, "account_not_found", None
+                    return False, "backend_discord_auth_not_available", None
                 if response.status != 200:
                     detail = await response.text()
                     return False, f"Backend login failed ({response.status}): {detail[:250]}", None
@@ -391,7 +326,6 @@ class General(commands.Cog, name="general"):
         token: str,
         amount_cents: int,
         duration_seconds: int,
-        mode: str,
         recipient_usernames: list[str],
     ) -> tuple[bool, str, Optional[int]]:
         headers = {
@@ -401,7 +335,6 @@ class General(commands.Cog, name="general"):
         body = {
             "amount_cents": amount_cents,
             "duration_seconds": duration_seconds,
-            "mode": mode,
             "recipient_usernames": recipient_usernames,
         }
 
@@ -421,33 +354,6 @@ class General(commands.Cog, name="general"):
                 if stake_id is None:
                     return True, "Stake created successfully.", None
                 return True, f"Stake #{stake_id} created successfully.", int(stake_id)
-
-    async def _has_saved_payment_method(self, token: str) -> tuple[bool, str]:
-        headers = {"Authorization": f"Bearer {token}"}
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{self.backend_api_base}/users/me",
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=20),
-            ) as response:
-                if response.status != 200:
-                    detail = await response.text()
-                    return False, f"Could not verify payment method ({response.status}): {detail[:250]}"
-
-                payload: Any = await response.json()
-                if not isinstance(payload, dict):
-                    return False, "Could not verify payment method from backend response."
-
-                has_last4 = bool(str(payload.get("payment_method_last4") or "").strip())
-                has_network = bool(str(payload.get("payment_method_network") or "").strip())
-                if has_last4 and has_network:
-                    return True, ""
-
-                return False, (
-                    "No saved payment method found.\n"
-                    f"Connect one here: {self.frontend_payment_setup_url}"
-                )
 
     async def _activate_stake_via_api(
         self,
@@ -564,40 +470,50 @@ class General(commands.Cog, name="general"):
             embed=make_snitch_embed("Checking your Snitch account..."),
             view=None,
         )
-        logged_in, login_message, token = await self._get_backend_token_for_discord_user(context.author.id)
-        if not logged_in:
-            if login_message == "account_not_found":
-                await initial_message.edit(
-                    embed=make_snitch_embed(
-                        f"No Snitch account is linked to your Discord yet.\n"
-                        f"Create one here: {self.frontend_signup_url}",
-                        is_error=True,
-                    ),
-                    view=None,
-                )
-                return
-
+        status_ok, status_message, discord_account_status = await self._get_discord_account_status(context.author.id)
+        if not status_ok or discord_account_status is None:
             await initial_message.edit(
-                embed=make_snitch_embed(login_message, is_error=True),
+                embed=make_snitch_embed(status_message or "Could not check your Discord account status.", is_error=True),
                 view=None,
             )
             return
 
-        if token is None:
+        if not bool(discord_account_status.get("exists")):
             await initial_message.edit(
-                embed=make_snitch_embed("Could not authenticate with backend.", is_error=True),
+                embed=make_snitch_embed(
+                    f"No Snitch account is linked to your Discord yet.\n"
+                    f"Create one here: {self.frontend_signup_url}",
+                    is_error=True,
+                ),
                 view=None,
             )
             return
 
-        await initial_message.edit(
-            embed=make_snitch_embed("Checking your payment method..."),
-            view=None,
+        if not bool(discord_account_status.get("payment_method_ready")):
+            await initial_message.edit(
+                embed=make_snitch_embed(
+                    "No saved payment method found.\n"
+                    f"Connect one here: {self.frontend_payment_setup_url}",
+                    is_error=True,
+                ),
+                view=None,
+            )
+            return
+
+        logged_in, login_message, token = await self._get_backend_token_for_discord_user(
+            context.author.id,
+            discord_account_status=discord_account_status,
         )
-        has_payment_method, payment_method_message = await self._has_saved_payment_method(token)
-        if not has_payment_method:
+        if not logged_in or token is None:
+            auth_message = login_message
+            if login_message == "backend_discord_auth_not_available":
+                auth_message = (
+                    "Could not get an API token for your Discord-linked account. "
+                    "Please ask the backend team to expose a Discord token issuance endpoint."
+                )
+
             await initial_message.edit(
-                embed=make_snitch_embed(payment_method_message, is_error=True),
+                embed=make_snitch_embed(auth_message or "Could not authenticate with backend.", is_error=True),
                 view=None,
             )
             return
@@ -646,7 +562,6 @@ class General(commands.Cog, name="general"):
             return
 
         recipients: list[discord.abc.User] = []
-        recipient_mode: Optional[str] = None
         while True:
             recipient_mode_view = RecipientModeView(context.author.id)
             await prompt_message.edit(
@@ -660,8 +575,6 @@ class General(commands.Cog, name="general"):
                     view=None,
                 )
                 return
-
-            recipient_mode = recipient_mode_view.mode
 
             if recipient_mode_view.mode == "mention":
                 await prompt_message.edit(
@@ -695,33 +608,24 @@ class General(commands.Cog, name="general"):
                     if (not member.bot and member.id != context.author.id)
                 ]
             else:
-                if mode_view.mode == "solo":
-                    recipients = []
+                join_view = JoinRecipientsView(context.author.id)
+                await prompt_message.edit(
+                    embed=make_snitch_embed("Anyone can click **Join Bet** now. Click **Done** when you are finished."),
+                    view=join_view,
+                )
+                await join_view.wait()
+                if not join_view.finished:
                     await prompt_message.edit(
-                        embed=make_snitch_embed(
-                            "Anyone can join once the solo timer starts. Skipping pre-join phase."
-                        ),
+                        embed=make_snitch_embed("Recipient join window timed out. Command canceled.", is_error=True),
                         view=None,
                     )
-                else:
-                    join_view = JoinRecipientsView(context.author.id)
-                    await prompt_message.edit(
-                        embed=make_snitch_embed("Anyone can click **Join Bet** now. Click **Done** when you are finished."),
-                        view=join_view,
-                    )
-                    await join_view.wait()
-                    if not join_view.finished:
-                        await prompt_message.edit(
-                            embed=make_snitch_embed("Recipient join window timed out. Command canceled.", is_error=True),
-                            view=None,
-                        )
-                        return
-                    recipients = list(join_view.recipients.values())
+                    return
+                recipients = list(join_view.recipients.values())
 
-            if mode_view.mode == "group" and not recipients:
+            if not recipients:
                 await prompt_message.edit(
                     embed=make_snitch_embed(
-                        "Group mode requires at least one recipient. Please select recipients again.",
+                        "At least one recipient is required. Please select recipients again.",
                         is_error=True,
                     ),
                     view=None,
@@ -784,7 +688,6 @@ class General(commands.Cog, name="general"):
             token=token,
             amount_cents=amount_cents,
             duration_seconds=duration_seconds,
-            mode=mode_view.mode,
             recipient_usernames=recipient_usernames,
         )
         if not created:
@@ -832,15 +735,6 @@ class General(commands.Cog, name="general"):
                 context.author.id: context.author,
                 **recipients_by_id,
             }
-            active_join_view: Optional[ActiveSoloJoinView] = None
-            if recipient_mode == "anyone" and stake_id is not None:
-                active_join_view = ActiveSoloJoinView(
-                    author_id=context.author.id,
-                    participants_by_id=participants_by_id,
-                    backend_api_base=self.backend_api_base,
-                    token=token,
-                    stake_id=stake_id,
-                )
 
             await self._run_live_timer(
                 timer_message=prompt_message,
@@ -848,7 +742,6 @@ class General(commands.Cog, name="general"):
                 bet_amount=bet_amount,
                 participants_by_id=participants_by_id,
                 mode="solo",
-                timer_view=active_join_view,
             )
             return
 
