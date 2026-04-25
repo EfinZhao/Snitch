@@ -94,6 +94,15 @@ class DiscordBot(commands.Bot):
     async def on_message(self, message: discord.Message) -> None:
         if message.author == self.user or message.author.bot:
             return
+
+        if isinstance(message.channel, discord.DMChannel):
+            if message.content.strip().lower() == "auth":
+                context = await self.get_context(message)
+                auth_command = self.get_command("auth")
+                if auth_command is not None:
+                    await context.invoke(auth_command)
+                    return
+
         await self.process_commands(message)
 
     async def on_command_completion(self, context: Context) -> None:

@@ -22,6 +22,33 @@ Get tokens from `POST /api/auth/login`.
 2. Login with `POST /api/auth/login`
 3. Use returned token for protected endpoints
 
+## Endpoint Inventory
+
+All currently implemented endpoints:
+
+| Method | Path | Auth Required | Notes |
+|---|---|---|---|
+| GET | `/api/health` | No | Health check |
+| POST | `/api/auth/login` | No | OAuth2 password form (`username` = email) |
+| POST | `/api/users` | No | Create account |
+| GET | `/api/users/me` | Yes | Current user profile |
+| GET | `/api/users/discord/{discord_uid}` | No | Discord-linked account status |
+| GET | `/api/users/search?q=<prefix>` | Yes | User search (up to 10 results) |
+| POST | `/api/stakes` | Yes | Create stake |
+| GET | `/api/stakes` | Yes | List stakes created by current user |
+| GET | `/api/stakes/received` | Yes | List stakes where current user is a recipient |
+| GET | `/api/stakes/{stake_id}` | Yes | Stake details |
+| POST | `/api/stakes/{stake_id}/activate` | Yes | Activate pending stake |
+| PATCH | `/api/stakes/{stake_id}` | Yes | Update active stake progress |
+| POST | `/api/stakes/{stake_id}/resolve` | Yes | Resolve active stake |
+| DELETE | `/api/stakes/{stake_id}` | Yes | Cancel pending stake |
+| POST | `/api/payments/setup-intent` | Yes | Create Stripe SetupIntent |
+| POST | `/api/connect/onboarding-link` | Yes | Create Stripe Connect onboarding link |
+| GET | `/api/connect/status` | Yes | Stripe Connect status |
+| POST | `/api/webhooks/stripe` | No* | Stripe webhook (server-to-server) |
+
+`*` Webhook requests must include a valid Stripe signature header.
+
 ---
 
 ## Health
@@ -126,6 +153,41 @@ Example:
 ```bash
 curl http://localhost:8000/api/users/me \
   -H "Authorization: Bearer <access_token>"
+```
+
+### GET /api/users/discord/{discord_uid}
+
+Returns whether a Discord user is linked to an app account and whether payment/payout setup is complete.
+
+Notes:
+- Public endpoint (no bearer token required).
+
+Example:
+
+```bash
+curl http://localhost:8000/api/users/discord/123456789012345678
+```
+
+Example response when found:
+
+```json
+{
+  "exists": true,
+  "user_id": 7,
+  "payment_method_ready": true,
+  "payout_ready": false
+}
+```
+
+Example response when not found:
+
+```json
+{
+  "exists": false,
+  "user_id": null,
+  "payment_method_ready": false,
+  "payout_ready": false
+}
 ```
 
 ### GET /api/users/search?q=<prefix>
