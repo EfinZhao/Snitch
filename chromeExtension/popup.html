@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="popup.css" />
+  <title>Snitch</title>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Snitch</h1>
+      <p class="subtitle">Distraction tracker</p>
+    </header>
+
+    <section class="add-site">
+      <div class="input-row">
+        <input
+          type="text"
+          id="siteInput"
+          placeholder="e.g. example.com"
+          spellcheck="false"
+        />
+        <button id="addBtn">Add</button>
+      </div>
+      <p id="inputError" class="error hidden"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Flagged Sites</h2>
+      <ul id="siteList" class="site-list"></ul>
+      <p id="emptyMsg" class="empty-msg hidden">No flagged sites yet.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Recent Visits</h2>
+      <ul id="visitList" class="visit-list"></ul>
+      <p id="emptyVisits" class="empty-msg hidden">No visits logged yet.</p>
+    </section>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
