@@ -1,3 +1,5 @@
+const API_BASE = "http://localhost:8000/api";
+
 const siteInput = document.getElementById("siteInput");
 const addBtn = document.getElementById("addBtn");
 const inputError = document.getElementById("inputError");
@@ -10,7 +12,16 @@ const todayCount = document.getElementById("todayCount");
 const streakCount = document.getElementById("streakCount");
 const siteCountBadge = document.getElementById("siteCountBadge");
 const blockToggle = document.getElementById("blockToggle");
+const blockToggleWrap = document.getElementById("blockToggleWrap");
 const toggleLabel = document.getElementById("toggleLabel");
+
+const loginView = document.getElementById("loginView");
+const mainView = document.getElementById("mainView");
+const loginEmail = document.getElementById("loginEmail");
+const loginPassword = document.getElementById("loginPassword");
+const loginBtn = document.getElementById("loginBtn");
+const loginError = document.getElementById("loginError");
+const logoutBtn = document.getElementById("logoutBtn");
 
 function normalizeDomain(raw) {
   let d = raw.trim().toLowerCase();
@@ -224,6 +235,71 @@ function removeSite(domain) {
   });
 }
 
+function showView(loggedIn) {
+  if (loggedIn) {
+    loginView.classList.add("hidden");
+    mainView.classList.remove("hidden");
+    blockToggleWrap.classList.remove("hidden");
+    logoutBtn.classList.remove("hidden");
+  } else {
+    loginView.classList.remove("hidden");
+    mainView.classList.add("hidden");
+    blockToggleWrap.classList.add("hidden");
+    logoutBtn.classList.add("hidden");
+  }
+}
+
+function showLoginError(msg) {
+  loginError.textContent = msg;
+  loginError.classList.remove("hidden");
+  setTimeout(() => loginError.classList.add("hidden"), 4000);
+}
+
+async function handleLogin() {
+  const email = loginEmail.value.trim();
+  const password = loginPassword.value;
+
+  if (!email || !password) {
+    showLoginError("Enter your email and password.");
+    return;
+  }
+
+  loginBtn.disabled = true;
+  loginBtn.textContent = "SIGNING IN…";
+
+  try {
+    const body = new URLSearchParams({ username: email, password });
+    const res = await fetch(`${API_BASE}/auth/login`, {
+      method: "POST",
+      body,
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new Error(data?.detail || "Login failed");
+    }
+
+    const { access_token } = await res.json();
+    chrome.storage.local.set({ authToken: access_token, authEmail: email }, () => {
+      showView(true);
+      loadAll();
+    });
+  } catch (err) {
+    showLoginError(err.message);
+  } finally {
+    loginBtn.disabled = false;
+    loginBtn.textContent = "SIGN IN";
+  }
+}
+
+function handleLogout() {
+  chrome.storage.local.remove(["authToken", "authEmail"], () => {
+    loginEmail.value = "";
+    loginPassword.value = "";
+    showView(false);
+  });
+}
+
 addBtn.addEventListener("click", addSite);
 siteInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") addSite();
@@ -235,6 +311,12 @@ blockToggle.addEventListener("change", () => {
   toggleLabel.textContent = enabled ? "Blocking" : "Block";
 });
 
+loginBtn.addEventListener("click", handleLogin);
+loginPassword.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") handleLogin();
+});
+logoutBtn.addEventListener("click", handleLogout);
+
 siteInput.addEventListener("focus", () => {
   siteInput.parentElement.classList.add("focused");
 });
@@ -243,4 +325,8 @@ siteInput.addEventListener("blur", () => {
   siteInput.parentElement.classList.remove("focused");
 });
 
-loadAll();
+chrome.storage.local.get(["authToken"], (result) => {
+  const loggedIn = !!result.authToken;
+  showView(loggedIn);
+  if (loggedIn) loadAll();
+});
