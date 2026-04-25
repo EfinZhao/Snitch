@@ -11,6 +11,11 @@ class StakeOutcome(StrEnum):
     FAILED = 'failed'
 
 
+class DistractionReport(BaseModel):
+    hostname: str
+    url: str
+
+
 class StakeCreate(BaseModel):
     amount_cents: int
     duration_seconds: int
