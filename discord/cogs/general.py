@@ -1,7 +1,9 @@
 import asyncio
+import os
 import re
-from typing import Optional
+from typing import Any, Optional
 
+import aiohttp
 import discord
 from discord.ext import commands
 from discord.ext.commands import Context
@@ -54,7 +56,7 @@ def format_duration(seconds: int) -> str:
 
 def make_snitch_embed(description: str, is_error: bool = False) -> discord.Embed:
     color = 0xE02B2B if is_error else 0x2F80ED
-    return discord.Embed(title="Snitch", description=description, color=color)
+    return discord.Embed(title="Stake", description=description, color=color)
 
 
 class ModeSelectView(discord.ui.View):
@@ -272,10 +274,35 @@ class ActiveSoloJoinView(discord.ui.View):
         self,
         author_id: int,
         participants_by_id: dict[int, discord.abc.User],
+        backend_api_base: str,
+        token: str,
+        stake_id: int,
     ) -> None:
         super().__init__(timeout=None)
         self.author_id = author_id
         self.participants_by_id = participants_by_id
+        self.backend_api_base = backend_api_base
+        self.token = token
+        self.stake_id = stake_id
+
+    async def _add_recipient_via_api(self, username: str) -> tuple[bool, str]:
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+        }
+        body = {"recipient_username": username}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.backend_api_base}/stakes/{self.stake_id}/recipients",
+                json=body,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as response:
+                if response.status != 200:
+                    detail = await response.text()
+                    return False, f"Join failed ({response.status}): {detail[:200]}"
+                return True, ""
 
     @discord.ui.button(label="Join As Recipient", style=discord.ButtonStyle.success)
     async def join_button(
@@ -292,9 +319,24 @@ class ActiveSoloJoinView(discord.ui.View):
             )
             return
 
+        username = interaction.user.name.strip().lower()
+        if not username:
+            await interaction.response.send_message(
+                "Unable to determine your username for recipient add.", ephemeral=True
+            )
+            return
+
+        added, message = await self._add_recipient_via_api(username)
+        if not added:
+            await interaction.response.send_message(
+                f"Could not add you as recipient in backend. {message}",
+                ephemeral=True,
+            )
+            return
+
         self.participants_by_id[interaction.user.id] = interaction.user
         await interaction.response.send_message(
-            "You joined this active snitch bet.", ephemeral=True
+            "You joined this active stake.", ephemeral=True
         )
 
     @discord.ui.button(label="Leave Bet", style=discord.ButtonStyle.danger)
@@ -314,13 +356,116 @@ class ActiveSoloJoinView(discord.ui.View):
 
         self.participants_by_id.pop(interaction.user.id, None)
         await interaction.response.send_message(
-            "You left this active snitch bet.", ephemeral=True
+            "You left this active stake.", ephemeral=True
         )
 
 
 class General(commands.Cog, name="general"):
     def __init__(self, bot) -> None:
         self.bot = bot
+        backend_base = os.getenv("BACKEND_API_BASE_URL", "http://localhost:8000/api")
+        self.backend_api_base = backend_base.rstrip("/")
+        self.frontend_signup_url = os.getenv("FRONTEND_SIGNUP_URL", "http://localhost:5173")
+        self.frontend_payment_setup_url = os.getenv("FRONTEND_PAYMENT_SETUP_URL", "http://localhost:5173")
+
+    async def _get_backend_token_for_discord_user(self, discord_uid: int) -> tuple[bool, str, Optional[str]]:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.backend_api_base}/auth/discord-login/{discord_uid}",
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as response:
+                if response.status == 404:
+                    return False, "account_not_found", None
+                if response.status != 200:
+                    detail = await response.text()
+                    return False, f"Backend login failed ({response.status}): {detail[:250]}", None
+
+                payload: Any = await response.json()
+                token = payload.get("access_token") if isinstance(payload, dict) else None
+                if not token:
+                    return False, "Backend login response did not include an access token.", None
+                return True, "", str(token)
+
+    async def _create_stake_via_api(
+        self,
+        token: str,
+        amount_cents: int,
+        duration_seconds: int,
+        mode: str,
+        recipient_usernames: list[str],
+    ) -> tuple[bool, str, Optional[int]]:
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        body = {
+            "amount_cents": amount_cents,
+            "duration_seconds": duration_seconds,
+            "mode": mode,
+            "recipient_usernames": recipient_usernames,
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.backend_api_base}/stakes",
+                json=body,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as response:
+                if response.status != 201:
+                    detail = await response.text()
+                    return False, f"Stake creation failed ({response.status}): {detail[:300]}", None
+
+                payload: Any = await response.json()
+                stake_id = payload.get("id") if isinstance(payload, dict) else None
+                if stake_id is None:
+                    return True, "Stake created successfully.", None
+                return True, f"Stake #{stake_id} created successfully.", int(stake_id)
+
+    async def _has_saved_payment_method(self, token: str) -> tuple[bool, str]:
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{self.backend_api_base}/users/me",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as response:
+                if response.status != 200:
+                    detail = await response.text()
+                    return False, f"Could not verify payment method ({response.status}): {detail[:250]}"
+
+                payload: Any = await response.json()
+                if not isinstance(payload, dict):
+                    return False, "Could not verify payment method from backend response."
+
+                has_last4 = bool(str(payload.get("payment_method_last4") or "").strip())
+                has_network = bool(str(payload.get("payment_method_network") or "").strip())
+                if has_last4 and has_network:
+                    return True, ""
+
+                return False, (
+                    "No saved payment method found.\n"
+                    f"Connect one here: {self.frontend_payment_setup_url}"
+                )
+
+    async def _activate_stake_via_api(
+        self,
+        token: str,
+        stake_id: int,
+    ) -> tuple[bool, str]:
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.backend_api_base}/stakes/{stake_id}/activate",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as response:
+                if response.status != 200:
+                    detail = await response.text()
+                    return False, f"Stake activation failed ({response.status}): {detail[:300]}"
+                return True, ""
 
     async def _prompt_for_text(
         self,
@@ -407,16 +552,59 @@ class General(commands.Cog, name="general"):
         )
 
     @commands.hybrid_command(
-        name="snitch",
-        description="Create a solo or group snitch bet with a countdown timer.",
+        name="stake",
+        description="Create a solo or group stake with a countdown timer.",
     )
-    async def snitch(self, context: Context) -> None:
+    async def stake(self, context: Context) -> None:
         if context.guild is None:
             await context.send(embed=make_snitch_embed("This command can only be used in a server.", is_error=True))
             return
 
+        initial_message = await context.send(
+            embed=make_snitch_embed("Checking your Snitch account..."),
+            view=None,
+        )
+        logged_in, login_message, token = await self._get_backend_token_for_discord_user(context.author.id)
+        if not logged_in:
+            if login_message == "account_not_found":
+                await initial_message.edit(
+                    embed=make_snitch_embed(
+                        f"No Snitch account is linked to your Discord yet.\n"
+                        f"Create one here: {self.frontend_signup_url}",
+                        is_error=True,
+                    ),
+                    view=None,
+                )
+                return
+
+            await initial_message.edit(
+                embed=make_snitch_embed(login_message, is_error=True),
+                view=None,
+            )
+            return
+
+        if token is None:
+            await initial_message.edit(
+                embed=make_snitch_embed("Could not authenticate with backend.", is_error=True),
+                view=None,
+            )
+            return
+
+        await initial_message.edit(
+            embed=make_snitch_embed("Checking your payment method..."),
+            view=None,
+        )
+        has_payment_method, payment_method_message = await self._has_saved_payment_method(token)
+        if not has_payment_method:
+            await initial_message.edit(
+                embed=make_snitch_embed(payment_method_message, is_error=True),
+                view=None,
+            )
+            return
+
         mode_view = ModeSelectView(context.author.id)
-        prompt_message = await context.send(
+        prompt_message = initial_message
+        await prompt_message.edit(
             embed=make_snitch_embed("Pick a mode for this bet:"),
             view=mode_view,
         )
@@ -570,6 +758,48 @@ class General(commands.Cog, name="general"):
             )
             return
 
+        recipient_usernames = sorted({user.name.strip().lower() for user in recipients if user.name.strip()})
+        if mode_view.mode == "group" and not recipient_usernames:
+            await prompt_message.edit(
+                embed=make_snitch_embed(
+                    "Could not derive valid group recipient usernames from Discord users.",
+                    is_error=True,
+                ),
+                view=None,
+            )
+            return
+
+        amount_cents = int(round(bet_amount * 100))
+        await prompt_message.edit(
+            embed=make_snitch_embed(
+                f"Creating stake via API...\n"
+                f"Amount: ${bet_amount:.2f}\n"
+                f"Mode: {mode_view.mode}\n"
+                f"Duration: {format_duration(duration_seconds)}\n"
+                f"Recipients: {', '.join(recipient_usernames) if recipient_usernames else 'none yet'}"
+            ),
+            view=None,
+        )
+        created, creation_message, stake_id = await self._create_stake_via_api(
+            token=token,
+            amount_cents=amount_cents,
+            duration_seconds=duration_seconds,
+            mode=mode_view.mode,
+            recipient_usernames=recipient_usernames,
+        )
+        if not created:
+            await prompt_message.edit(
+                embed=make_snitch_embed(creation_message, is_error=True),
+                view=None,
+            )
+            return
+
+        await prompt_message.edit(
+            embed=make_snitch_embed(creation_message),
+            view=None,
+        )
+        await asyncio.sleep(1)
+
         recipients_by_id: dict[int, discord.abc.User] = {user.id: user for user in recipients}
 
         if mode_view.mode == "solo":
@@ -586,15 +816,30 @@ class General(commands.Cog, name="general"):
                 )
                 return
 
+            if stake_id is not None:
+                activated, activation_message = await self._activate_stake_via_api(
+                    token=token,
+                    stake_id=stake_id,
+                )
+                if not activated:
+                    await prompt_message.edit(
+                        embed=make_snitch_embed(activation_message, is_error=True),
+                        view=None,
+                    )
+                    return
+
             participants_by_id: dict[int, discord.abc.User] = {
                 context.author.id: context.author,
                 **recipients_by_id,
             }
             active_join_view: Optional[ActiveSoloJoinView] = None
-            if recipient_mode == "anyone":
+            if recipient_mode == "anyone" and stake_id is not None:
                 active_join_view = ActiveSoloJoinView(
                     author_id=context.author.id,
                     participants_by_id=participants_by_id,
+                    backend_api_base=self.backend_api_base,
+                    token=token,
+                    stake_id=stake_id,
                 )
 
             await self._run_live_timer(
@@ -631,6 +876,18 @@ class General(commands.Cog, name="general"):
                 view=None,
             )
             return
+
+        if stake_id is not None:
+            activated, activation_message = await self._activate_stake_via_api(
+                token=token,
+                stake_id=stake_id,
+            )
+            if not activated:
+                await prompt_message.edit(
+                    embed=make_snitch_embed(activation_message, is_error=True),
+                    view=None,
+                )
+                return
 
         await self._run_live_timer(
             timer_message=prompt_message,
