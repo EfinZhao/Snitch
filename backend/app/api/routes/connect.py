@@ -32,6 +32,7 @@ async def get_connect_status(user: CurrentUserDep, session: SessionDep):
         user.stripe_account_enabled = enabled
         session.add(user)
         await session.commit()
+        await session.refresh(user)
 
     return ConnectStatus(
         account_id=user.stripe_account_id,
