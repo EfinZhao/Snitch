@@ -1,16 +1,19 @@
 import { useState, useEffect, useRef } from 'react'
 import Button from '../atoms/Button'
-import type { Screen } from '../../types'
+import { apiPost, apiGet, apiPatch, ApiError } from '../../api/client'
+import { useDistractionDetection } from '../../hooks/useDistractionDetection'
+import type { Screen, UserProfile, StakeRead } from '../../types'
 
 const DEFAULT_SECONDS = 25 * 60
 const CX = 124, CY = 124, R = 112
+const SYNC_INTERVAL_MS = 30_000
 
 function formatTime(s: number) {
   const h = Math.floor(s / 3600)
   const m = Math.floor((s % 3600) / 60)
   const sec = s % 60
   if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
-  return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+  return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '00')}`
 }
 
 function parseInput(raw: string): number | null {
@@ -19,25 +22,16 @@ function parseInput(raw: string): number | null {
   return Math.round(minutes * 60)
 }
 
-// fraction 0→1 maps to a point on the arc in the SVG's transformed space
-// SVG has rotate(-90deg) scaleX(-1), so fraction 0 = top, clockwise
 function fractionToPoint(fraction: number) {
-  // In the SVG local space (after rotate -90 + scaleX -1):
-  // angle 0 = right in standard coords → top after rotate(-90) → top after scaleX(-1)
-  // Going clockwise means increasing angle in this mirrored space
   const angle = -fraction * 2 * Math.PI
-  return {
-    x: CX + R * Math.cos(angle),
-    y: CY + R * Math.sin(angle),
-  }
+  return { x: CX + R * Math.cos(angle), y: CY + R * Math.sin(angle) }
 }
 
-// Returns SVG polygon points for a triangle on the arc pointing toward center
 function trianglePoints(cx: number, cy: number, size = 7): string {
   const inward = Math.sqrt((cx - CX) ** 2 + (cy - CY) ** 2)
-  const nx = (CX - cx) / inward  // unit vector toward center
+  const nx = (CX - cx) / inward
   const ny = (CY - cy) / inward
-  const px = -ny, py = nx        // perpendicular
+  const px = -ny, py = nx
   const tip = { x: cx + nx * size * 1.2, y: cy + ny * size * 1.2 }
   const l   = { x: cx + px * size, y: cy + py * size }
   const r   = { x: cx - px * size, y: cy - py * size }
@@ -45,8 +39,15 @@ function trianglePoints(cx: number, cy: number, size = 7): string {
 }
 
 type Recipient = { username: string }
+type SearchResult = { id: number; username: string }
 
-export default function FocusDashboard({ navigate: _navigate }: { navigate: (screen: Screen) => void }) {
+interface Props {
+  navigate: (screen: Screen) => void
+  token: string
+  user: UserProfile
+}
+
+export default function FocusDashboard({ token, user }: Props) {
   const [totalSeconds, setTotalSeconds] = useState(DEFAULT_SECONDS)
   const [seconds, setSeconds] = useState(DEFAULT_SECONDS)
   const [running, setRunning] = useState(false)
@@ -55,15 +56,62 @@ export default function FocusDashboard({ navigate: _navigate }: { navigate: (scr
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const committingRef = useRef(false)
 
-  // distraction events stored as elapsed fraction (0=start, 1=end)
   const [distractions, setDistractions] = useState<number[]>([])
 
-  // Stakes state
+  // Stakes / session
   const [amount, setAmount] = useState('')
   const [recipients, setRecipients] = useState<Recipient[]>([])
+  const [stakeId, setStakeId] = useState<number | null>(null)
+  const [locking, setLocking] = useState(false)
+  const [lockError, setLockError] = useState('')
+
+  // Add recipient modal
   const [showModal, setShowModal] = useState(false)
   const [recipientInput, setRecipientInput] = useState('')
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
+  const [searching, setSearching] = useState(false)
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Distraction detection
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+
+  const { currentStatus } = useDistractionDetection({
+    active: running,
+    videoRef,
+    canvasRef,
+    onStrike: () => injectDistraction(),
+  })
+
+  // ── Camera: start when session starts, stop when it ends ───────────────
+  useEffect(() => {
+    const video = videoRef.current // capture so cleanup uses the same node
+    if (!running) {
+      if (video?.srcObject) {
+        ;(video.srcObject as MediaStream).getTracks().forEach(t => t.stop())
+        video.srcObject = null
+      }
+      return
+    }
+    let cancelled = false
+    let stream: MediaStream | null = null
+    navigator.mediaDevices
+      .getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } })
+      .then(s => {
+        stream = s
+        if (cancelled || !videoRef.current) { s.getTracks().forEach(t => t.stop()); return }
+        videoRef.current.srcObject = s
+        videoRef.current.play().catch(() => {})
+      })
+      .catch(() => {}) // camera denied — tracker silently disabled
+    return () => {
+      cancelled = true
+      stream?.getTracks().forEach(t => t.stop())
+      if (video) video.srcObject = null
+    }
+  }, [running])
+
+  // ── Timer tick ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (running && seconds > 0) {
       intervalRef.current = setInterval(() => setSeconds(s => s - 1), 1000)
@@ -73,6 +121,33 @@ export default function FocusDashboard({ navigate: _navigate }: { navigate: (scr
     return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
   }, [running, seconds])
 
+  // ── Auto-resolve when timer reaches 0 ──────────────────────────────────
+  useEffect(() => {
+    if (!running || seconds !== 0 || stakeId === null) return
+    const id = stakeId
+    const elapsed = totalSeconds
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setRunning(false)
+    setStakeId(null)
+    /* eslint-enable react-hooks/set-state-in-effect */
+    apiPost(`/stakes/${id}/resolve`, { outcome: 'completed', elapsed_seconds: elapsed }, token)
+      .catch(() => {})
+  }, [running, seconds, stakeId, totalSeconds, token])
+
+  // ── Periodic progress sync to backend ──────────────────────────────────
+  useEffect(() => {
+    if (!running || stakeId === null) return
+    const id = setInterval(() => {
+      const elapsed = totalSeconds - seconds
+      apiPatch(`/stakes/${stakeId}`, {
+        distraction_count: distractions.length,
+        elapsed_seconds: elapsed,
+      }, token).catch(() => {})
+    }, SYNC_INTERVAL_MS)
+    return () => clearInterval(id)
+  }, [running, stakeId, distractions.length, seconds, totalSeconds, token])
+
+  // ── Time editing ────────────────────────────────────────────────────────
   function startEditing() {
     if (running) return
     committingRef.current = false
@@ -94,11 +169,7 @@ export default function FocusDashboard({ navigate: _navigate }: { navigate: (scr
 
   function handleInputKey(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter') commitEdit(inputVal)
-    if (e.key === 'Escape') {
-      committingRef.current = true
-      setEditing(false)
-      setInputVal('')
-    }
+    if (e.key === 'Escape') { committingRef.current = true; setEditing(false); setInputVal('') }
   }
 
   function injectDistraction() {
@@ -106,14 +177,42 @@ export default function FocusDashboard({ navigate: _navigate }: { navigate: (scr
     setDistractions(prev => [...prev, elapsed])
   }
 
-  function openModal() { setRecipientInput(''); setShowModal(true) }
-  function closeModal() { setShowModal(false); setRecipientInput('') }
+  // ── Recipient search ────────────────────────────────────────────────────
+  function openModal() { setRecipientInput(''); setSearchResults([]); setShowModal(true) }
+  function closeModal() { setShowModal(false); setRecipientInput(''); setSearchResults([]) }
 
-  function addRecipient() {
-    const username = recipientInput.trim().replace(/^@/, '')
-    if (!username) return
-    if (!recipients.some(r => r.username.toLowerCase() === username.toLowerCase())) {
-      setRecipients(prev => [...prev, { username }])
+  function handleRecipientInputChange(val: string) {
+    const clean = val.replace(/\s/g, '')
+    setRecipientInput(clean)
+
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    if (clean.length < 1) { setSearchResults([]); return }
+
+    searchTimerRef.current = setTimeout(async () => {
+      setSearching(true)
+      try {
+        const results = await apiGet<SearchResult[]>(`/users/search?q=${encodeURIComponent(clean)}`, token)
+        // Filter out self and already-added recipients
+        setSearchResults(results.filter(
+          r => r.username !== user.username && !recipients.some(rec => rec.username === r.username)
+        ))
+      } catch {
+        setSearchResults([])
+      } finally {
+        setSearching(false)
+      }
+    }, 300)
+  }
+
+  // Only allow adding users that appeared in search results — prevents adding
+  // non-existent users and enforces self-exclusion at the search level.
+  function addRecipient(username: string) {
+    const clean = username.trim().replace(/^@/, '')
+    if (!clean) return
+    const found = searchResults.find(r => r.username.toLowerCase() === clean.toLowerCase())
+    if (!found) return
+    if (!recipients.some(r => r.username.toLowerCase() === clean.toLowerCase())) {
+      setRecipients(prev => [...prev, { username: found.username }])
     }
     closeModal()
   }
@@ -122,18 +221,64 @@ export default function FocusDashboard({ navigate: _navigate }: { navigate: (scr
     setRecipients(prev => prev.filter(r => r.username !== username))
   }
 
-  function handleRecipientKey(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter') addRecipient()
-    if (e.key === 'Escape') closeModal()
+  // ── Lock In → create + activate stake ──────────────────────────────────
+  async function handleLockIn() {
+    setLockError('')
+    const amountNum = parseFloat(amount)
+    if (isNaN(amountNum) || amountNum <= 0) {
+      setLockError('Enter an amount greater than $0.')
+      return
+    }
+    if (recipients.length === 0) {
+      setLockError('Add at least one recipient.')
+      return
+    }
+
+    const amount_cents = Math.round(amountNum * 100)
+    setLocking(true)
+    try {
+      const stake = await apiPost<StakeRead>('/stakes', {
+        amount_cents,
+        duration_seconds: totalSeconds,
+        recipient_usernames: recipients.map(r => r.username),
+      }, token)
+      await apiPost<StakeRead>(`/stakes/${stake.id}/activate`, {}, token)
+      setStakeId(stake.id)
+      setRunning(true)
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 400) setLockError(err.message)
+        else if (err.status === 404) setLockError('One or more recipients not found.')
+        else setLockError('Could not start session. Try again.')
+      } else {
+        setLockError('Could not reach the server.')
+      }
+    } finally {
+      setLocking(false)
+    }
   }
 
   const circumference = 2 * Math.PI * R
   const elapsed = (totalSeconds - seconds) / totalSeconds
 
+  // Arc color reflects live distraction status
+  const arcColor = currentStatus === 'distracted'
+    ? '#ef4444'
+    : currentStatus === 'warning'
+      ? '#eab308'
+      : 'var(--color-primary-fixed-dim)'
+
+  const canAddRecipient = searchResults.some(
+    r => r.username.toLowerCase() === recipientInput.trim().toLowerCase()
+  )
+
   return (
     <div className="flex flex-col items-center px-6 py-6 gap-5">
+      {/* Hidden camera feed for distraction detection */}
+      <video ref={videoRef} width={640} height={480} playsInline muted className="hidden" />
+      <canvas ref={canvasRef} width={640} height={480} className="hidden" />
 
-      <br></br>
+      <br />
 
       {/* Clock face */}
       <div className="relative flex items-center justify-center">
@@ -147,31 +292,24 @@ export default function FocusDashboard({ navigate: _navigate }: { navigate: (scr
           className="absolute pointer-events-none"
           style={{ transform: 'rotate(-90deg) scaleX(1)' }}
         >
-          {/* Progress arc — starts full, drains clockwise */}
           <circle
             cx={CX} cy={CY} r={R}
             fill="none"
-            stroke="var(--color-primary-fixed-dim)"
+            stroke={arcColor}
             strokeWidth="8"
             strokeLinecap="round"
             strokeDasharray={circumference}
             strokeDashoffset={elapsed * circumference}
+            style={{ transition: 'stroke 0.4s ease' }}
           />
-
-          {/* Distraction marks — rendered in normal orientation via transform */}
           {distractions.map((fraction, i) => {
             const pt = fractionToPoint(fraction)
             return (
-              <polygon
-                key={i}
-                points={trianglePoints(pt.x, pt.y)}
-                fill="#ef4444"
-              />
+              <polygon key={i} points={trianglePoints(pt.x, pt.y)} fill="#ef4444" />
             )
           })}
         </svg>
 
-        {/* Inner circle */}
         <div
           className="flex flex-col items-center justify-center rounded-full border-2 border-outline-variant bg-surface relative z-10"
           style={{ width: '208px', height: '208px' }}
@@ -198,16 +336,21 @@ export default function FocusDashboard({ navigate: _navigate }: { navigate: (scr
             </button>
           )}
           <span className="text-outline-variant text-xs mt-1 tracking-widest">
-            {editing ? 'minutes' : distractions.length > 0 ? `${distractions.length} distraction${distractions.length > 1 ? 's' : ''}` : '• • •'}
+            {editing
+              ? 'minutes'
+              : distractions.length > 0
+                ? `${distractions.length} distraction${distractions.length > 1 ? 's' : ''}`
+                : running && currentStatus === 'warning'
+                  ? '⚠ warning'
+                  : '• • •'}
           </span>
         </div>
       </div>
 
-      <br></br>
+      <br />
 
       {/* Stakes section */}
-      <div className="flex flex-col items-center gap-3">
-        {/* Amount input */}
+      <div className="flex flex-col items-center gap-3 w-full">
         <div className="flex items-center gap-1 border-b border-outline-variant pb-1">
           <span className="font-display text-base text-on-surface-variant">$</span>
           <input
@@ -217,54 +360,68 @@ export default function FocusDashboard({ navigate: _navigate }: { navigate: (scr
             placeholder="0.00"
             value={amount}
             onChange={e => setAmount(e.target.value)}
-            className="bg-transparent font-display font-semibold text-lg text-on-surface w-20 text-center outline-none placeholder:text-outline-variant tabular-nums"
+            disabled={running}
+            className="bg-transparent font-display font-semibold text-lg text-on-surface w-20 text-center outline-none placeholder:text-outline-variant tabular-nums disabled:opacity-50"
           />
           <span className="font-display text-base text-on-surface-variant">on the line</span>
         </div>
 
-        <br></br>
+        <br />
 
-        {/* Recipient avatars */}
         <div className="font-display text-base">Recipients</div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-center">
           {recipients.map(({ username }) => (
             <button
               key={username}
-              onClick={() => removeRecipient(username)}
-              title={`@${username} — tap to remove`}
+              onClick={() => { if (!running) removeRecipient(username) }}
+              title={running ? `@${username}` : `@${username} — tap to remove`}
               className="w-15 h-15 rounded-full border-2 border-primary bg-primary-fixed flex items-center justify-center text-xs font-display font-semibold text-primary flex-shrink-0"
             >
               {username.slice(0, 2).toUpperCase()}
             </button>
           ))}
-          <button
-            onClick={openModal}
-            className="w-15 h-15 rounded-full border-2 border-dashed border-outline-variant flex items-center justify-center text-lg text-on-surface-variant hover:border-primary hover:text-primary transition-colors flex-shrink-0"
-          >
-            +
-          </button>
+          {!running && (
+            <button
+              onClick={openModal}
+              className="w-15 h-15 rounded-full border-2 border-dashed border-outline-variant flex items-center justify-center text-lg text-on-surface-variant hover:border-primary hover:text-primary transition-colors flex-shrink-0"
+            >
+              +
+            </button>
+          )}
         </div>
       </div>
 
-      <br></br>
+      <br />
 
-      <Button
-        variant="primary"
-        fullWidth
-        onClick={() => setRunning(true)}
-        disabled={running}
-        className="max-w-xs"
-      >
-        {running ? '⏳ Running…' : '🔒 Lock In'}
-      </Button>
+      {lockError && (
+        <p className="font-body text-sm text-error text-center w-full max-w-xs">{lockError}</p>
+      )}
 
-      {/* DEV: inject distraction */}
-      <button
-        onClick={injectDistraction}
-        className="text-xs text-error border border-error rounded px-3 py-1 opacity-60 hover:opacity-100 transition-opacity"
-      >
-        [dev] distracted
-      </button>
+      {running ? (
+        <div className="flex items-center justify-center gap-2 w-full max-w-xs py-3 font-body text-sm text-on-surface-variant">
+          <span className="w-2 h-2 rounded-full bg-error animate-pulse flex-shrink-0" />
+          Session in progress — stay focused
+        </div>
+      ) : (
+        <Button
+          variant="primary"
+          fullWidth
+          onClick={handleLockIn}
+          disabled={locking}
+          className="max-w-xs"
+        >
+          {locking ? 'Starting…' : '🔒 Lock In'}
+        </Button>
+      )}
+
+      {import.meta.env.DEV && running && (
+        <button
+          onClick={injectDistraction}
+          className="text-xs text-error border border-error rounded px-3 py-1 opacity-60 hover:opacity-100 transition-opacity"
+        >
+          [dev] distracted
+        </button>
+      )}
 
       {/* Add recipient modal */}
       {showModal && (
@@ -273,8 +430,9 @@ export default function FocusDashboard({ navigate: _navigate }: { navigate: (scr
           onClick={e => { if (e.target === e.currentTarget) closeModal() }}
         >
           <div className="absolute inset-0 bg-black/40" />
-          <div className="relative w-72 bg-surface rounded-2xl px-6 pt-6 pb-6 flex flex-col gap-5 shadow-xl">
+          <div className="relative w-72 bg-surface rounded-2xl px-6 pt-6 pb-6 flex flex-col gap-4 shadow-xl">
             <h2 className="font-display font-semibold text-xl text-on-surface">Add Recipient</h2>
+
             <div className="flex items-center gap-2 border-b-2 border-primary pb-2">
               <span className="font-body text-on-surface-variant">@</span>
               <input
@@ -282,14 +440,54 @@ export default function FocusDashboard({ navigate: _navigate }: { navigate: (scr
                 type="text"
                 placeholder="username"
                 value={recipientInput}
-                onChange={e => setRecipientInput(e.target.value.replace(/\s/g, ''))}
-                onKeyDown={handleRecipientKey}
+                onChange={e => handleRecipientInputChange(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') addRecipient(recipientInput)
+                  if (e.key === 'Escape') closeModal()
+                }}
                 className="flex-1 bg-transparent font-body text-lg text-on-surface outline-none placeholder:text-outline-variant"
               />
+              {searching && (
+                <svg className="animate-spin text-primary flex-shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                </svg>
+              )}
             </div>
+
+            {/* Search results */}
+            {searchResults.length > 0 && (
+              <div className="flex flex-col gap-1 max-h-40 overflow-y-auto -mx-2">
+                {searchResults.map(r => (
+                  <button
+                    key={r.id}
+                    onClick={() => addRecipient(r.username)}
+                    className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-surface-container transition-colors text-left"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-primary-fixed border border-primary flex items-center justify-center text-xs font-display font-semibold text-primary flex-shrink-0">
+                      {r.username.slice(0, 2).toUpperCase()}
+                    </div>
+                    <span className="font-body text-sm text-on-surface">@{r.username}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {recipientInput.trim() && !searching && searchResults.length === 0 && (
+              <p className="font-body text-xs text-on-surface-variant text-center">
+                No users found.
+              </p>
+            )}
+
             <div className="flex gap-3">
               <Button variant="ghost" fullWidth onClick={closeModal}>Cancel</Button>
-              <Button variant="primary" fullWidth onClick={addRecipient}>Add</Button>
+              <Button
+                variant="primary"
+                fullWidth
+                onClick={() => addRecipient(recipientInput)}
+                disabled={!canAddRecipient}
+              >
+                Add
+              </Button>
             </div>
           </div>
         </div>

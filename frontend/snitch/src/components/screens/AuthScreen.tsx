@@ -1,8 +1,10 @@
 import { useState, type FormEvent } from 'react'
 import Button from '../atoms/Button'
+import StripeCardForm from '../StripeCardForm'
 import { apiPost, apiPostForm, ApiError } from '../../api/client'
 
 type Mode = 'signin' | 'signup'
+type Step = 'auth' | 'card' | 'redirecting'
 
 interface AuthScreenProps {
   onAuthenticated: (token: string) => void
@@ -19,12 +21,16 @@ const LABEL_CLASS = 'font-body text-xs font-semibold text-on-surface-variant upp
 
 export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   const [mode, setMode] = useState<Mode>('signin')
+  const [step, setStep] = useState<Step>('auth')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [username, setUsername] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [redirecting, setRedirecting] = useState(false)
+
+  // Held after sign-up so the card step can use them
+  const [pendingToken, setPendingToken] = useState('')
+  const [pendingClientSecret, setPendingClientSecret] = useState('')
 
   function switchMode(next: Mode) {
     setMode(next)
@@ -49,19 +55,19 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       localStorage.setItem('snitch_token', access_token)
 
       if (mode === 'signup') {
-        setLoading(false)
-        setRedirecting(true)
-        const { url } = await apiPost<{ url: string }>(
-          '/connect/onboarding-link',
+        // Create Stripe Customer and get client_secret for card collection
+        const { client_secret } = await apiPost<{ client_secret: string; customer_id: string }>(
+          '/payments/setup-intent',
           {},
           access_token,
         )
-        window.location.href = url
+        setPendingToken(access_token)
+        setPendingClientSecret(client_secret)
+        setStep('card')
       } else {
         onAuthenticated(access_token)
       }
     } catch (err) {
-      setRedirecting(false)
       if (err instanceof ApiError) {
         if (err.status === 409) setError('That email or username is already taken.')
         else if (err.status === 401) setError('Incorrect email or password.')
@@ -74,7 +80,52 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
     }
   }
 
-  if (redirecting) {
+  async function handleCardSuccess() {
+    // Mark card as done so SetupScreen skips the card step on return from Stripe
+    localStorage.setItem('snitch_card_done', '1')
+    setStep('redirecting')
+    try {
+      localStorage.setItem('snitch_onboarding_started', '1')
+      const { url } = await apiPost<{ url: string }>('/connect/onboarding-link', {}, pendingToken)
+      window.location.href = url
+    } catch {
+      localStorage.removeItem('snitch_onboarding_started')
+      setStep('card')
+      setError('Could not reach the server. Please try again.')
+    }
+  }
+
+  // ── Card step ─────────────────────────────────────────────────────────────
+  if (step === 'card') {
+    return (
+      <div className="flex flex-col flex-1 overflow-y-auto">
+        <div className="flex-1 flex flex-col items-center justify-end pb-7 px-6 gap-1">
+          <h1 className="font-display font-semibold text-5xl text-primary italic tracking-tight select-none">
+            Snitch
+          </h1>
+          <p className="font-body italic text-sm text-on-surface-variant text-center leading-snug">
+            Add a payment method to get started.
+          </p>
+        </div>
+
+        <div className="flex-shrink-0 flex flex-col px-5 gap-4 pb-8">
+          <div>
+            <h2 className="font-display font-semibold text-lg text-on-surface">Add Your Card</h2>
+            <p className="font-body text-xs text-on-surface-variant mt-1">
+              Your card is charged only if you fail a focus session.
+            </p>
+          </div>
+
+          {error && <p className="font-body text-sm text-error">{error}</p>}
+
+          <StripeCardForm clientSecret={pendingClientSecret} token={pendingToken} onSuccess={handleCardSuccess} />
+        </div>
+      </div>
+    )
+  }
+
+  // ── Redirecting to Stripe Connect onboarding ──────────────────────────────
+  if (step === 'redirecting') {
     return (
       <div className="flex flex-col items-center justify-center flex-1 gap-4 px-6">
         <svg
@@ -96,6 +147,7 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
     )
   }
 
+  // ── Auth form ─────────────────────────────────────────────────────────────
   return (
     <form
       onSubmit={handleSubmit}
@@ -206,7 +258,7 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
         {mode === 'signup' && (
           <p className="font-body text-xs text-on-surface-variant text-center leading-snug">
-            After account creation you'll be taken to Stripe to set up your payment account.
+            After account creation you'll be asked to add a card, then set up your payout account.
           </p>
         )}
       </div>
