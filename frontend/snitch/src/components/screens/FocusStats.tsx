@@ -213,7 +213,7 @@ export default function FocusStats({ navigate }: { navigate: (screen: Screen) =>
             </div>
           </Card>
           <div className="mt-3">
-            <Button variant="ghost" fullWidth onClick={() => navigate('stakes')}>
+            <Button variant="ghost" fullWidth onClick={() => navigate('dashboard')}>
               Log New Session
             </Button>
           </div>
