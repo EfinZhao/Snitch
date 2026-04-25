@@ -1,6 +1,5 @@
 import Card from "../atoms/Card";
 import Chip from "../atoms/Chip";
-import ProgressBar from "../atoms/ProgressBar";
 import Button from "../atoms/Button";
 import type { Screen } from "../../types";
 
