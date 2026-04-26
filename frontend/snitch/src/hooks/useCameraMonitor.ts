@@ -26,6 +26,7 @@ export interface CameraMonitorState {
   breakUntil: number | null
   breakRemaining: number
   streamRef: React.MutableRefObject<MediaStream | null>
+  setDisplayCanvas: (canvas: HTMLCanvasElement | null) => void
   startCamera: () => Promise<void>
   stopCamera: () => void
   startBreak: (durationMs: number, reason: BreakReason) => void
@@ -45,6 +46,15 @@ export function useCameraMonitor(token: string | null): CameraMonitorState {
     bgVideoRef.current = v
   }
   if (bgCanvasRef.current === null) bgCanvasRef.current = document.createElement('canvas')
+
+  // The canvas detection actually draws to — defaults to bgCanvas (off-DOM),
+  // but DistractionMonitor can redirect it to a visible overlay canvas.
+  const activeCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  if (activeCanvasRef.current === null) activeCanvasRef.current = bgCanvasRef.current
+
+  const setDisplayCanvas = useCallback((canvas: HTMLCanvasElement | null) => {
+    activeCanvasRef.current = canvas ?? bgCanvasRef.current
+  }, [])
 
   const streamRef = useRef<MediaStream | null>(null)
   const eventIdRef = useRef(0)
@@ -122,7 +132,7 @@ export function useCameraMonitor(token: string | null): CameraMonitorState {
   const { loadingState, loadingStep, errorMessage, currentStatus } = useDistractionDetection({
     active,
     videoRef: bgVideoRef,
-    canvasRef: bgCanvasRef,
+    canvasRef: activeCanvasRef,
     onWarning: handleWarning,
     onStrike: handleStrike,
   })
@@ -178,6 +188,7 @@ export function useCameraMonitor(token: string | null): CameraMonitorState {
     breakUntil,
     breakRemaining,
     streamRef,
+    setDisplayCanvas,
     startCamera,
     stopCamera,
     startBreak,
