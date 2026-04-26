@@ -329,7 +329,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
   // this listener receives the relay from content.js and updates the UI.
   useEffect(() => {
     function onExtensionDistraction() {
-      if (!stakeIdRef.current) return;
+      if (!sessionIdRef.current) return;
       handleExternalStrikeRef.current("blocked_site");
       // Arc mark is added by the camera-events effect above when the new event lands
     }
@@ -339,7 +339,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
 
   // ── Push session state to extension whenever it changes ────────────────
   useEffect(() => {
-    if (!running || stakeId === null) return;
+    if (!running || sessionId === null) return;
     try {
       const raw = localStorage.getItem(SESSION_KEY);
       const session: PersistedSession | null = raw ? JSON.parse(raw) : null;
@@ -353,7 +353,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     } catch { /* ignore */ }
   // seconds intentionally excluded — we only need to sync on structural changes
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, stakeId, distractions, totalSeconds, amountCents]);
+  }, [running, sessionId, distractions, totalSeconds, amountCents]);
 
   // ── Timer tick ──────────────────────────────────────────────────────────
   useEffect(() => {
