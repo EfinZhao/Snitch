@@ -115,6 +115,22 @@ class AuthActionView(discord.ui.View):
             )
 
 
+class TauntModal(discord.ui.Modal, title="You're almost in!"):
+    taunt_input: discord.ui.TextInput = discord.ui.TextInput(
+        label='Leave a taunt (optional)',
+        placeholder='e.g. You won\'t last 5 minutes 😂',
+        required=False,
+        max_length=80,
+    )
+
+    def __init__(self, *, on_submit_callback) -> None:
+        super().__init__()
+        self._callback = on_submit_callback
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self._callback(interaction, (self.taunt_input.value or '').strip())
+
+
 class StartSessionView(discord.ui.View):
     def __init__(self, start_url: str, author_id: int) -> None:
         super().__init__(timeout=3600)
@@ -128,14 +144,18 @@ class StartSessionView(discord.ui.View):
                 'Only the person running this session can start it.', ephemeral=True
             )
             return
-        button.disabled = True
-        await interaction.response.edit_message(view=self)
-        await interaction.followup.send(self.start_url, ephemeral=True)
+        await interaction.response.send_message(self.start_url, ephemeral=True)
 
 
 class LobbyView(discord.ui.View):
     def __init__(
-        self, author_id: int, max_recipients: int, amount: float, duration_seconds: int, auth_client: 'AuthClient'
+        self,
+        author_id: int,
+        max_recipients: int,
+        amount: float,
+        duration_seconds: int,
+        auth_client: 'AuthClient',
+        session_title: str = '',
     ) -> None:
         super().__init__(timeout=300)
         self.author_id = author_id
@@ -143,7 +163,9 @@ class LobbyView(discord.ui.View):
         self.amount = amount
         self.duration_seconds = duration_seconds
         self.auth_client = auth_client
+        self.session_title = session_title
         self.joined: dict[int, discord.abc.User] = {}
+        self.taunts: list[tuple[str, str]] = []
         self.started = False
 
     def _details_text(self) -> str:
@@ -168,8 +190,27 @@ class LobbyView(discord.ui.View):
             await interaction.response.send_message('No more room — the doubter slots are full.', ephemeral=True)
             return
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        original_message = interaction.message
 
+        async def on_taunt_submitted(modal_interaction: discord.Interaction, taunt: str) -> None:
+            await self._complete_join(modal_interaction, user, taunt, original_message)
+
+        await interaction.response.send_modal(TauntModal(on_submit_callback=on_taunt_submitted))
+
+    async def _complete_join(
+        self,
+        interaction: discord.Interaction,
+        user: discord.abc.User,
+        taunt: str,
+        original_message: Optional[discord.Message],
+    ) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        if user.id in self.joined:
+            await interaction.followup.send("You're already a doubter here!", ephemeral=True)
+            return
+        if len(self.joined) >= self.max_recipients:
+            await interaction.followup.send('No more room — the doubter slots are full.', ephemeral=True)
+            return
         status_ok, status_msg, status = await self.auth_client.get_discord_account_status(user.id)
         if not status_ok or status is None:
             await interaction.followup.send(f'Could not verify your Snitch account: {status_msg}', ephemeral=True)
@@ -188,10 +229,16 @@ class LobbyView(discord.ui.View):
                 ephemeral=True,
             )
             return
-
         self.joined[user.id] = user
+        if taunt:
+            self.taunts.append((user.display_name, taunt))
         await interaction.followup.send("You're in as a doubter!", ephemeral=True)
-        await interaction.message.edit(embed=make_snitch_embed(self._details_text()), view=self)
+        if original_message is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await original_message.edit(
+                    embed=make_snitch_embed(self._details_text(), title=self.session_title),
+                    view=self,
+                )
 
     @discord.ui.button(label='Start My Session', style=discord.ButtonStyle.primary)
     async def start_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -228,6 +275,7 @@ class OpenSessionSessionView(discord.ui.View):
         duration_seconds: int,
         start_url: str,
         initial_recipients: Optional[dict[int, discord.abc.User]] = None,
+        session_title: str = '',
     ) -> None:
         super().__init__(timeout=float(duration_seconds))
         self.cog = cog
@@ -236,6 +284,7 @@ class OpenSessionSessionView(discord.ui.View):
         self.token = token
         self.max_recipients = max_recipients
         self.start_url = start_url
+        self.session_title = session_title
         self.joined_recipients: dict[int, discord.abc.User] = dict(initial_recipients or {})
 
     def _details_text(self) -> str:
@@ -256,9 +305,7 @@ class OpenSessionSessionView(discord.ui.View):
                 'Only the person running this session can start it.', ephemeral=True
             )
             return
-        button.disabled = True
-        await interaction.response.edit_message(view=self)
-        await interaction.followup.send(self.start_url, ephemeral=True)
+        await interaction.response.send_message(self.start_url, ephemeral=True)
 
     @discord.ui.button(label="I'm a Doubter", style=discord.ButtonStyle.success)
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -275,14 +322,34 @@ class OpenSessionSessionView(discord.ui.View):
             await interaction.response.send_message('This session is fully doubted — no room left.', ephemeral=True)
             return
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        original_message = interaction.message
+        user = interaction.user
 
-        status_ok, status_msg, status = await self.cog.auth_client.get_discord_account_status(interaction.user.id)
+        async def on_taunt_submitted(modal_interaction: discord.Interaction, taunt: str) -> None:
+            await self._complete_join(modal_interaction, user, taunt, original_message)
+
+        await interaction.response.send_modal(TauntModal(on_submit_callback=on_taunt_submitted))
+
+    async def _complete_join(
+        self,
+        interaction: discord.Interaction,
+        user: discord.abc.User,
+        taunt: str,
+        original_message: Optional[discord.Message],
+    ) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        if user.id in self.joined_recipients:
+            await interaction.followup.send("You're already a doubter on this one!", ephemeral=True)
+            return
+        if len(self.joined_recipients) >= self.max_recipients:
+            await interaction.followup.send('This session is fully doubted — no room left.', ephemeral=True)
+            return
+        status_ok, status_msg, status = await self.cog.auth_client.get_discord_account_status(user.id)
         if not status_ok or status is None:
             await interaction.followup.send("Couldn't verify your Snitch account. Try again later.", ephemeral=True)
             return
         if not status.get('exists'):
-            signup_url = self.cog.auth_client.signup_url_with_discord_uid(interaction.user.id)
+            signup_url = self.cog.auth_client.signup_url_with_discord_uid(user.id)
             await interaction.followup.send(
                 f"You'll need a Snitch account first.\nSign up here: {signup_url}",
                 ephemeral=True,
@@ -295,22 +362,27 @@ class OpenSessionSessionView(discord.ui.View):
                 ephemeral=True,
             )
             return
-
-        added, message = await self.cog._add_session_recipient_via_api(
+        added, add_message = await self.cog._add_session_recipient_via_api(
             token=self.token,
             session_id=self.session_id,
-            recipient_discord_uid=interaction.user.id,
+            recipient_discord_uid=user.id,
         )
         if not added:
             await interaction.followup.send(
-                f'Something went wrong adding you as a doubter.\nDetails: {message}',
+                f'Something went wrong adding you as a doubter.\nDetails: {add_message}',
                 ephemeral=True,
             )
             return
-
-        self.joined_recipients[interaction.user.id] = interaction.user
+        self.joined_recipients[user.id] = user
+        if taunt:
+            self.cog._session_taunts.setdefault(self.session_id, []).append((user.display_name, taunt))
         await interaction.followup.send("You're in as a doubter — good luck to them 😈", ephemeral=True)
-        await interaction.message.edit(embed=make_snitch_embed(self._details_text()), view=self)
+        if original_message is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await original_message.edit(
+                    embed=make_snitch_embed(self._details_text(), title=self.session_title),
+                    view=self,
+                )
 
     async def on_timeout(self) -> None:
         for child in self.children:
@@ -324,8 +396,22 @@ class General(commands.Cog, name='general'):
         backend_base = os.getenv('BACKEND_API_BASE_URL', 'http://localhost:8000/api')
         self.backend_api_base = backend_base.rstrip('/')
         self.auth_client = AuthClient()
-        self.frontend_payment_setup_url = os.getenv("FRONTEND_PAYMENT_SETUP_URL", "http://localhost:5173")
-        self.frontend_session_launch_url = os.getenv("FRONTEND_SESSION_LAUNCH_URL", "http://localhost:5173")
+        self.frontend_payment_setup_url = os.getenv('FRONTEND_PAYMENT_SETUP_URL', 'http://localhost:5173')
+        self.frontend_session_launch_url = os.getenv('FRONTEND_SESSION_LAUNCH_URL', 'http://localhost:5173')
+        self._session_taunts: dict[int, list[tuple[str, str]]] = {}
+        self._creating_session_user_ids: set[int] = set()
+        self._creating_session_lock = asyncio.Lock()
+
+    async def _begin_session_creation(self, user_id: int) -> bool:
+        async with self._creating_session_lock:
+            if user_id in self._creating_session_user_ids:
+                return False
+            self._creating_session_user_ids.add(user_id)
+            return True
+
+    async def _end_session_creation(self, user_id: int) -> None:
+        async with self._creating_session_lock:
+            self._creating_session_user_ids.discard(user_id)
 
     async def _create_session_via_api(
         self,
@@ -405,6 +491,24 @@ class General(commands.Cog, name='general'):
                     return False, "Could not parse session response payload.", None
                 return True, "", payload
 
+    async def _has_active_session_via_api(self, token: str) -> tuple[bool, bool, str]:
+        headers = {'Authorization': f'Bearer {token}'}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{self.backend_api_base}/sessions?status=active",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as response:
+                if response.status != 200:
+                    detail = await response.text()
+                    return False, False, f"Could not verify active sessions ({response.status}): {detail[:300]}"
+
+                payload: Any = await response.json()
+                if not isinstance(payload, list):
+                    return False, False, 'Could not parse active sessions response payload.'
+
+                return True, len(payload) > 0, ''
+
     def _parse_backend_datetime(self, raw: Optional[str]) -> Optional[datetime]:
         if not raw:
             return None
@@ -442,20 +546,41 @@ class General(commands.Cog, name='general'):
             f'Time left: **{format_duration(max(0, seconds_left))}**'
         )
 
-    def _session_final_summary(self, session_payload: dict[str, Any]) -> str:
+    def _session_final_summary(
+        self, session_payload: dict[str, Any], taunts: Optional[list[tuple[str, str]]] = None
+    ) -> str:
         status = str(session_payload.get('status') or 'unknown')
         amount_cents = int(session_payload.get('amount_cents') or 0)
         distraction_count = int(session_payload.get('distraction_count') or 0)
         elapsed = int(session_payload.get('elapsed_seconds') or 0)
         doubters_text = ', '.join(self._extract_recipient_names(session_payload)) or 'none'
-        outcome = '✅ Completed' if status == 'completed' else '❌ Failed'
-        return (
-            f'{outcome}\n'
-            f'Bet: **${amount_cents / 100:.2f}**\n'
-            f'Duration: **{format_duration(elapsed)}**\n'
-            f'Strikes: **{distraction_count}**\n'
-            f'Doubters: {doubters_text}'
-        )
+        if status == 'completed':
+            if distraction_count == 0:
+                outcome = '✅ **Flawless.** Not a single distraction.'
+            elif distraction_count == 1:
+                outcome = '✅ **Done.** One close call, but you held it together.'
+            elif distraction_count <= 3:
+                outcome = f'✅ **Squeaked through** — {distraction_count} strikes, but still made it.'
+            else:
+                outcome = f'✅ **Made it,** despite {distraction_count} strikes. Barely.'
+        else:
+            if distraction_count == 0:
+                outcome = '❌ **Session ended early.** Something came up.'
+            elif distraction_count == 1:
+                outcome = '❌ **One too many distractions.**'
+            else:
+                outcome = f'❌ **Got got.** {distraction_count} strikes and out.'
+        lines = [
+            outcome,
+            f'Bet: **${amount_cents / 100:.2f}**',
+            f'Duration: **{format_duration(elapsed)}**',
+            f'Doubters: {doubters_text}',
+        ]
+        if taunts:
+            taunt_lines = '\n'.join(f'> "{t}" — {name}' for name, t in taunts if t)
+            if taunt_lines:
+                lines.append(f'\n**What the doubters said:**\n{taunt_lines}')
+        return '\n'.join(lines)
 
     async def _stream_session_events(
         self,
@@ -546,7 +671,9 @@ class General(commands.Cog, name='general'):
                         live_view.stop()
                     await message.edit(
                         embed=make_snitch_embed(
-                            self._session_final_summary(session_payload),
+                            self._session_final_summary(
+                                session_payload, taunts=self._session_taunts.get(session_id, [])
+                            ),
                             title=session_title,
                         ),
                         view=live_view,
@@ -644,6 +771,52 @@ class General(commands.Cog, name='general'):
             return None
         return AuthActionView(signup_url=signup_url, payment_url=payment_url)
 
+    async def _wait_for_view_or_cancel(
+        self,
+        context: Context,
+        prompt_message: discord.Message,
+        view: discord.ui.View,
+    ) -> bool:
+        """Wait for a view to finish, but allow the creator to type `cancel` at any time."""
+
+        def check(message: discord.Message) -> bool:
+            return message.author.id == context.author.id and message.channel.id == context.channel.id
+
+        view_task = asyncio.create_task(view.wait())
+        try:
+            while True:
+                msg_task = asyncio.create_task(self.bot.wait_for('message', check=check))
+                done, _ = await asyncio.wait({view_task, msg_task}, return_when=asyncio.FIRST_COMPLETED)
+
+                if view_task in done:
+                    msg_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await msg_task
+                    return False
+
+                message = msg_task.result()
+                if message.content.strip().lower() != 'cancel':
+                    continue
+
+                try:
+                    await message.delete()
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+                for child in view.children:
+                    child.disabled = True
+                view.stop()
+                await prompt_message.edit(
+                    embed=make_snitch_embed('Session creation cancelled.', is_error=True),
+                    view=view,
+                )
+                return True
+        finally:
+            if not view_task.done():
+                view_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await view_task
+
     async def _prompt_for_text(
         self,
         context: Context,
@@ -665,6 +838,12 @@ class General(commands.Cog, name='general'):
                     await message.delete()
                 except (discord.Forbidden, discord.HTTPException):
                     pass
+            if content.strip().lower() == 'cancel':
+                await prompt_message.edit(
+                    embed=make_snitch_embed('Session creation cancelled.', is_error=True),
+                    view=None,
+                )
+                return None
             return content
         except asyncio.TimeoutError:
             await prompt_message.edit(
@@ -685,253 +864,409 @@ class General(commands.Cog, name='general'):
             await context.send(embed=make_snitch_embed('This command can only be used in a server.', is_error=True))
             return
 
-        initial_message = await context.send(
-            embed=make_snitch_embed('Getting you set up...'),
-            view=None,
-        )
-        auth_ok, auth_message, token, status = await self.auth_client.authenticate_discord_user(
-            context.author.id,
-            require_payment_method=True,
-        )
-        if not auth_ok or token is None:
-            auth_view = self._build_auth_view(context.author.id, status)
-            await initial_message.edit(
-                embed=make_snitch_embed(auth_message or 'Could not authenticate with backend.', is_error=True),
-                view=auth_view,
-            )
+        if not await self._begin_session_creation(context.author.id):
+            send_kwargs = {
+                'embed': make_snitch_embed(
+                    'You are already creating a session right now. Finish or cancel it before starting another.',
+                    is_error=True,
+                )
+            }
+            if context.interaction is not None:
+                send_kwargs['ephemeral'] = True
+            await context.send(**send_kwargs)
             return
 
-        prompt_message = initial_message
-        recipient_mode_view = RecipientModeView(context.author.id)
-        await prompt_message.edit(
-            embed=make_snitch_embed(
-                "Who's doubting you?\n"
-                '- **Tag Them Now**: lock in your doubters before the session starts.\n'
-                '- **Open to Anyone**: let people join as doubters while you study.'
-            ),
-            view=recipient_mode_view,
-        )
-        await recipient_mode_view.wait()
-        if recipient_mode_view.mode is None:
+        try:
+            initial_message = await context.send(
+                embed=make_snitch_embed('Getting you set up...'),
+                view=None,
+            )
+            auth_ok, auth_message, token, status = await self.auth_client.authenticate_discord_user(
+                context.author.id,
+                require_payment_method=True,
+            )
+            if not auth_ok or token is None:
+                auth_view = self._build_auth_view(context.author.id, status)
+                await initial_message.edit(
+                    embed=make_snitch_embed(auth_message or 'Could not authenticate with backend.', is_error=True),
+                    view=auth_view,
+                )
+                return
+
+            active_check_ok, has_active_session, active_check_message = await self._has_active_session_via_api(token)
+            if not active_check_ok:
+                await initial_message.edit(
+                    embed=make_snitch_embed(active_check_message or 'Could not verify active sessions.', is_error=True),
+                    view=None,
+                )
+                return
+            if has_active_session:
+                await initial_message.edit(
+                    embed=make_snitch_embed(
+                        'You already have an active session. Finish that one before creating a new session.',
+                        is_error=True,
+                    ),
+                    view=None,
+                )
+                return
+
+            prompt_message = initial_message
+            recipient_mode_view = RecipientModeView(context.author.id)
             await prompt_message.edit(
                 embed=make_snitch_embed(
-                    "You didn't choose in time. Run `/session` again when you're ready.", is_error=True
+                    "Who's doubting you?\n"
+                    '- **Tag Them Now**: lock in your doubters before the session starts.\n'
+                    '- **Open to Anyone**: let people join as doubters while you study.\n\n'
+                    'Type `cancel` at any time before the session starts to abort creation.'
                 ),
-                view=None,
+                view=recipient_mode_view,
             )
-            return
-
-        recipients: list[discord.abc.User] = []
-        max_recipients: Optional[int] = None
-        if recipient_mode_view.mode == 'mention':
-            await prompt_message.edit(
-                embed=make_snitch_embed('Tag your doubters — mention them all in one message (e.g. `@alice @bob`).'),
-                view=None,
-            )
-
-            def mention_check(message: discord.Message) -> bool:
-                return message.author.id == context.author.id and message.channel.id == context.channel.id
-
-            try:
-                mention_message = await self.bot.wait_for('message', timeout=180, check=mention_check)
-            except asyncio.TimeoutError:
+            cancelled = await self._wait_for_view_or_cancel(context, prompt_message, recipient_mode_view)
+            if cancelled:
+                return
+            if recipient_mode_view.mode is None:
                 await prompt_message.edit(
                     embed=make_snitch_embed(
-                        "Took too long. Run `/session` again when you've got your doubters ready.",
-                        is_error=True,
+                        "You didn't choose in time. Run `/session` again when you're ready.", is_error=True
                     ),
                     view=None,
                 )
                 return
 
-            seen_ids: set[int] = set()
-            for member in mention_message.mentions:
-                if member.bot or member.id == context.author.id or member.id in seen_ids:
-                    continue
-                seen_ids.add(member.id)
-                recipients.append(member)
-
-            if not recipients:
+            recipients: list[discord.abc.User] = []
+            max_recipients: Optional[int] = None
+            if recipient_mode_view.mode == 'mention':
                 await prompt_message.edit(
-                    embed=make_snitch_embed('You need at least one doubter — mention someone!', is_error=True),
+                    embed=make_snitch_embed(
+                        'Tag your doubters — mention them in one message (e.g. `@alice @bob`).\n'
+                        'Type `cancel` to abort.\n'
+                    ),
                     view=None,
                 )
-                return
-        else:
+
+                def mention_check(message: discord.Message) -> bool:
+                    return message.author.id == context.author.id and message.channel.id == context.channel.id
+
+                seen_ids: set[int] = set()
+                while True:
+                    try:
+                        mention_message = await self.bot.wait_for('message', timeout=180, check=mention_check)
+                    except asyncio.TimeoutError:
+                        await prompt_message.edit(
+                            embed=make_snitch_embed(
+                                "Took too long. Run `/session` again when you've got your doubters ready.",
+                                is_error=True,
+                            ),
+                            view=None,
+                        )
+                        return
+
+                    raw_input = mention_message.content.strip().lower()
+                    try:
+                        await mention_message.delete()
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
+
+                    if raw_input == 'cancel':
+                        await prompt_message.edit(
+                            embed=make_snitch_embed('Session creation cancelled.', is_error=True),
+                            view=None,
+                        )
+                        return
+
+                    if raw_input == 'skip':
+                        if recipients:
+                            break
+                        await prompt_message.edit(
+                            embed=make_snitch_embed(
+                                'You need at least one valid doubter before you can skip. Mention someone with a Snitch account.',
+                                is_error=True,
+                            ),
+                            view=None,
+                        )
+                        continue
+
+                    if not mention_message.mentions:
+                        await prompt_message.edit(
+                            embed=make_snitch_embed(
+                                'No mentions found. Mention at least one user, or type `skip` if you already added someone.',
+                                is_error=True,
+                            ),
+                            view=None,
+                        )
+                        continue
+
+                    added_now: list[discord.abc.User] = []
+                    missing_accounts: list[str] = []
+                    verification_errors: list[str] = []
+
+                    for member in mention_message.mentions:
+                        if member.bot or member.id == context.author.id or member.id in seen_ids:
+                            continue
+
+                        status_ok, status_msg, status = await self.auth_client.get_discord_account_status(member.id)
+                        if not status_ok or status is None:
+                            verification_errors.append(f'{member.mention} ({status_msg or "status check failed"})')
+                            continue
+                        if not bool(status.get('exists')):
+                            missing_accounts.append(member.mention)
+                            continue
+
+                        seen_ids.add(member.id)
+                        recipients.append(member)
+                        added_now.append(member)
+
+                    if missing_accounts or verification_errors:
+                        details: list[str] = []
+                        if added_now:
+                            details.append(f"Added: {' '.join(user.mention for user in added_now)}")
+                        if missing_accounts:
+                            details.append('No linked Snitch account: ' + ', '.join(missing_accounts))
+                        if verification_errors:
+                            details.append('Could not verify: ' + '; '.join(verification_errors))
+
+                        skip_line = (
+                            'Type `skip` to continue, or mention more users.'
+                            if recipients
+                            else 'Mention new users with linked Snitch accounts.'
+                        )
+                        await prompt_message.edit(
+                            embed=make_snitch_embed(
+                                '\n'.join(details + [skip_line]),
+                                is_error=True,
+                            ),
+                            view=None,
+                        )
+                        continue
+
+                    if added_now:
+                        break
+
+                    await prompt_message.edit(
+                        embed=make_snitch_embed(
+                            'No new valid doubters were added. Mention different users, or type `skip` if you already added someone.',
+                            is_error=True,
+                        ),
+                        view=None,
+                    )
+
+                if not recipients:
+                    await prompt_message.edit(
+                        embed=make_snitch_embed('You need at least one doubter — mention someone!', is_error=True),
+                        view=None,
+                    )
+                    return
+            else:
+                for _ in range(3):
+                    raw_max = await self._prompt_for_text(
+                        context,
+                        prompt_message,
+                        'How many people can doubt you? Enter a number from 1 to 25.',
+                        delete_user_reply=True,
+                    )
+                    if raw_max is None:
+                        return
+                    if raw_max.strip().isdigit():
+                        value = int(raw_max.strip())
+                        if 1 <= value <= 25:
+                            max_recipients = value
+                            break
+                    await prompt_message.edit(
+                        embed=make_snitch_embed(
+                            "That's not valid. Enter a whole number between 1 and 25.",
+                            is_error=True,
+                        ),
+                        view=None,
+                    )
+
+                if max_recipients is None:
+                    await prompt_message.edit(
+                        embed=make_snitch_embed("Too many tries. Run `/session` again when you're ready.", is_error=True),
+                        view=None,
+                    )
+                    return
+
+            bet_amount: Optional[float] = None
             for _ in range(3):
-                raw_max = await self._prompt_for_text(
+                raw_bet = await self._prompt_for_text(
                     context,
                     prompt_message,
-                    'How many people can doubt you? Enter a number from 1 to 25.',
+                    'How much are you putting on the line? (e.g. `$25` or `10.50`)',
                     delete_user_reply=True,
                 )
-                if raw_max is None:
+                if raw_bet is None:
                     return
-                if raw_max.strip().isdigit():
-                    value = int(raw_max.strip())
-                    if 1 <= value <= 25:
-                        max_recipients = value
-                        break
+                bet_amount = parse_money_amount(raw_bet)
+                if bet_amount is not None:
+                    break
                 await prompt_message.edit(
                     embed=make_snitch_embed(
-                        "That's not valid. Enter a whole number between 1 and 25.",
+                        "That doesn't look right. Enter a dollar amount, like `$25` or `10.50`.",
                         is_error=True,
                     ),
                     view=None,
                 )
 
-            if max_recipients is None:
+            if bet_amount is None:
                 await prompt_message.edit(
                     embed=make_snitch_embed("Too many tries. Run `/session` again when you're ready.", is_error=True),
                     view=None,
                 )
                 return
 
-        bet_amount: Optional[float] = None
-        for _ in range(3):
-            raw_bet = await self._prompt_for_text(
-                context,
-                prompt_message,
-                'How much are you putting on the line? (e.g. `$25` or `10.50`)',
-                delete_user_reply=True,
-            )
-            if raw_bet is None:
-                return
-            bet_amount = parse_money_amount(raw_bet)
-            if bet_amount is not None:
-                break
-            await prompt_message.edit(
-                embed=make_snitch_embed(
-                    "That doesn't look right. Enter a dollar amount, like `$25` or `10.50`.",
-                    is_error=True,
-                ),
-                view=None,
-            )
-
-        if bet_amount is None:
-            await prompt_message.edit(
-                embed=make_snitch_embed("Too many tries. Run `/session` again when you're ready.", is_error=True),
-                view=None,
-            )
-            return
-
-        duration_seconds: Optional[int] = None
-        for _ in range(3):
-            raw_duration = await self._prompt_for_text(
-                context,
-                prompt_message,
-                'How long is your study session? (e.g. `25m`, `1h`, or `90` for 90 minutes)',
-                delete_user_reply=True,
-            )
-            if raw_duration is None:
-                return
-            duration_seconds = parse_duration_seconds(raw_duration)
-            if duration_seconds is not None:
-                break
-            await prompt_message.edit(
-                embed=make_snitch_embed(
-                    "Didn't quite get that. Try something like `25m`, `1h`, or `1h30m`.",
-                    is_error=True,
-                ),
-                view=None,
-            )
-
-        if duration_seconds is None:
-            await prompt_message.edit(
-                embed=make_snitch_embed("Too many tries. Run `/session` again when you're ready.", is_error=True),
-                view=None,
-            )
-            return
-
-        # In open-join mode, show a lobby and wait for at least one joiner before creating the session.
-        if recipient_mode_view.mode == 'anyone':
-            lobby_view = LobbyView(
-                author_id=context.author.id,
-                max_recipients=max_recipients or 1,
-                amount=bet_amount,
-                duration_seconds=duration_seconds,
-                auth_client=self.auth_client,
-            )
-            await prompt_message.edit(
-                embed=make_snitch_embed(
-                    lobby_view._details_text(), title=f"{context.author.display_name}'s Study Session"
-                ),
-                view=lobby_view,
-            )
-            await lobby_view.wait()
-
-            if not lobby_view.started:
+            duration_seconds: Optional[int] = None
+            for _ in range(3):
+                raw_duration = await self._prompt_for_text(
+                    context,
+                    prompt_message,
+                    'How long is your study session? (e.g. `25m`, `1h`, or `90` for 90 minutes)',
+                    delete_user_reply=True,
+                )
+                if raw_duration is None:
+                    return
+                duration_seconds = parse_duration_seconds(raw_duration)
+                if duration_seconds is not None:
+                    break
                 await prompt_message.edit(
                     embed=make_snitch_embed(
-                        'Nobody showed up. Run `/session` again when your doubters are ready.', is_error=True
+                        "Didn't quite get that. Try something like `25m`, `1h`, or `1h30m`.",
+                        is_error=True,
+                    ),
+                    view=None,
+                )
+
+            if duration_seconds is None:
+                await prompt_message.edit(
+                    embed=make_snitch_embed("Too many tries. Run `/session` again when you're ready.", is_error=True),
+                    view=None,
+                )
+                return
+
+            # In open-join mode, show a lobby and wait for at least one joiner before creating the session.
+            lobby_view: Optional[LobbyView] = None
+            if recipient_mode_view.mode == 'anyone':
+                lobby_view = LobbyView(
+                    author_id=context.author.id,
+                    max_recipients=max_recipients or 1,
+                    amount=bet_amount,
+                    duration_seconds=duration_seconds,
+                    auth_client=self.auth_client,
+                    session_title=f"{context.author.display_name}'s Study Session",
+                )
+                await prompt_message.edit(
+                    embed=make_snitch_embed(
+                        lobby_view._details_text(), title=f"{context.author.display_name}'s Study Session"
+                    ),
+                    view=lobby_view,
+                )
+                cancelled = await self._wait_for_view_or_cancel(context, prompt_message, lobby_view)
+                if cancelled:
+                    return
+
+                if not lobby_view.started:
+                    await prompt_message.edit(
+                        embed=make_snitch_embed(
+                            'Nobody showed up. Run `/session` again when your doubters are ready.', is_error=True
+                        ),
+                        view=None,
+                    )
+                    return
+
+                recipients = list(lobby_view.joined.values())
+
+            recipient_discord_uids = sorted({user.id for user in recipients if user.id > 0})
+
+            amount_cents = int(round(bet_amount * 100))
+            await prompt_message.edit(
+                embed=make_snitch_embed(
+                    f'Setting up your session...\n'
+                    f'Bet: **${bet_amount:.2f}** | Duration: **{format_duration(duration_seconds)}**\n'
+                    f'Doubters: {", ".join(user.mention for user in recipients) if recipients else "none yet"}',
+                    title=f"{context.author.display_name}'s Study Session",
+                ),
+                view=None,
+            )
+            created, creation_message, session_id = await self._create_session_via_api(
+                token=token,
+                amount_cents=amount_cents,
+                duration_seconds=duration_seconds,
+                recipient_discord_uids=recipient_discord_uids,
+            )
+            if not created:
+                await prompt_message.edit(
+                    embed=make_snitch_embed(creation_message, is_error=True),
+                    view=None,
+                )
+                return
+
+            await prompt_message.edit(
+                embed=make_snitch_embed(creation_message),
+                view=None,
+            )
+            if session_id is None:
+                await prompt_message.edit(
+                    embed=make_snitch_embed(
+                        "Session created, but no session ID was returned by backend. Cannot continue.",
+                        is_error=True,
                     ),
                     view=None,
                 )
                 return
 
-            recipients = list(lobby_view.joined.values())
+            if lobby_view is not None:
+                self._session_taunts[session_id] = list(lobby_view.taunts)
 
-        recipient_discord_uids = sorted({user.id for user in recipients if user.id > 0})
-
-        amount_cents = int(round(bet_amount * 100))
-        await prompt_message.edit(
-            embed=make_snitch_embed(
-                f'Setting up your session...\n'
-                f'Bet: **${bet_amount:.2f}** | Duration: **{format_duration(duration_seconds)}**\n'
-                f'Doubters: {", ".join(user.mention for user in recipients) if recipients else "none yet"}',
-                title=f"{context.author.display_name}'s Study Session",
-            ),
-            view=None,
-        )
-        created, creation_message, session_id = await self._create_session_via_api(
-            token=token,
-            amount_cents=amount_cents,
-            duration_seconds=duration_seconds,
-            recipient_discord_uids=recipient_discord_uids,
-        )
-        if not created:
-            await prompt_message.edit(
-                embed=make_snitch_embed(creation_message, is_error=True),
-                view=None,
+            launch_ok, launch_message, launch_token = await self._create_session_launch_token_via_api(
+                token=token,
+                session_id=session_id,
             )
-            return
+            if not launch_ok or launch_token is None:
+                await prompt_message.edit(
+                    embed=make_snitch_embed(launch_message or 'Could not create secure launch token.', is_error=True),
+                    view=None,
+                )
+                return
+            start_url = self._build_session_launch_url(session_id=session_id, launch_token=launch_token)
+            if recipient_mode_view.mode == "mention":
+                mention_text = " ".join(user.mention for user in recipients)
+                start_view = StartSessionView(start_url=start_url, author_id=context.author.id)
+                await prompt_message.edit(
+                    embed=make_snitch_embed(
+                        "Session is ready.\n"
+                        "Doubters are locked because you chose mention mode.\n"
+                        f"Doubters: {mention_text}\n"
+                        "Use the button below to open Snitch, sign in with Discord, and auto-start the session."
+                    ),
+                    view=start_view,
+                )
+                await self._run_live_session_message(
+                    message=prompt_message,
+                    token=token,
+                    session_id=session_id,
+                    fallback_duration_seconds=duration_seconds,
+                    session_title=f"{context.author.display_name}'s Study Session",
+                    live_view=start_view,
+                )
+                return
 
-        await prompt_message.edit(
-            embed=make_snitch_embed(creation_message),
-            view=None,
-        )
-        if session_id is None:
+            open_join_view = OpenSessionSessionView(
+                cog=self,
+                author_id=context.author.id,
+                session_id=session_id,
+                token=token,
+                max_recipients=max_recipients or 1,
+                duration_seconds=duration_seconds,
+                start_url=start_url,
+                initial_recipients={u.id: u for u in recipients},
+                session_title=f"{context.author.display_name}'s Study Session",
+            )
             await prompt_message.edit(
                 embed=make_snitch_embed(
-                    "Session created, but no session ID was returned by backend. Cannot continue.",
-                    is_error=True,
+                    "You're all set! Your session is open — anyone can join as a doubter while you study.\n"
+                    'Hit the button below to open Snitch and start your session.',
+                    title=f"{context.author.display_name}'s Study Session",
                 ),
-                view=None,
-            )
-            return
-
-        launch_ok, launch_message, launch_token = await self._create_session_launch_token_via_api(
-            token=token,
-            session_id=session_id,
-        )
-        if not launch_ok or launch_token is None:
-            await prompt_message.edit(
-                embed=make_snitch_embed(launch_message or 'Could not create secure launch token.', is_error=True),
-                view=None,
-            )
-            return
-        start_url = self._build_session_launch_url(session_id=session_id, launch_token=launch_token)
-        if recipient_mode_view.mode == "mention":
-            mention_text = " ".join(user.mention for user in recipients)
-            start_view = StartSessionView(start_url=start_url, author_id=context.author.id)
-            await prompt_message.edit(
-                embed=make_snitch_embed(
-                    "Session is ready.\n"
-                    "Doubters are locked because you chose mention mode.\n"
-                    f"Doubters: {mention_text}\n"
-                    "Use the button below to open Snitch, sign in with Discord, and auto-start the session."
-                ),
-                view=start_view,
+                view=open_join_view,
             )
             await self._run_live_session_message(
                 message=prompt_message,
@@ -939,36 +1274,10 @@ class General(commands.Cog, name='general'):
                 session_id=session_id,
                 fallback_duration_seconds=duration_seconds,
                 session_title=f"{context.author.display_name}'s Study Session",
-                live_view=start_view,
+                live_view=open_join_view,
             )
-            return
-
-        open_join_view = OpenSessionSessionView(
-            cog=self,
-            author_id=context.author.id,
-            session_id=session_id,
-            token=token,
-            max_recipients=max_recipients or 1,
-            duration_seconds=duration_seconds,
-            start_url=start_url,
-            initial_recipients={u.id: u for u in recipients},
-        )
-        await prompt_message.edit(
-            embed=make_snitch_embed(
-                "You're all set! Your session is open — anyone can join as a doubter while you study.\n"
-                'Hit the button below to open Snitch and start your session.',
-                title=f"{context.author.display_name}'s Study Session",
-            ),
-            view=open_join_view,
-        )
-        await self._run_live_session_message(
-            message=prompt_message,
-            token=token,
-            session_id=session_id,
-            fallback_duration_seconds=duration_seconds,
-            session_title=f"{context.author.display_name}'s Study Session",
-            live_view=open_join_view,
-        )
+        finally:
+            await self._end_session_creation(context.author.id)
 
 
 async def setup(bot) -> None:

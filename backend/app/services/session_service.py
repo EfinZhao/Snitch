@@ -283,6 +283,15 @@ async def resolve_session(
     focus_session.elapsed_seconds = body.elapsed_seconds
 
     if focus_session.distraction_count < STRIKE_THRESHOLD:
+        result = await db_session.exec(
+            select(SessionRecipient).where(SessionRecipient.session_id == focus_session.id)
+        )
+        recipient_rows = result.all()
+        for r in recipient_rows:
+            if r.payout_status == PayoutStatus.PENDING:
+                r.payout_status = PayoutStatus.CANCELED
+                db_session.add(r)
+
         focus_session.status = SessionStatus.COMPLETED
         db_session.add(focus_session)
         await db_session.commit()
