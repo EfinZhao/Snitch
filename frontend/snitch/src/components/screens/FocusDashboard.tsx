@@ -8,22 +8,71 @@ const DEFAULT_SECONDS = 25 * 60;
 const CX = 160,
   CY = 160,
   R = 148;
+
+// Both paths use 15 identical cubic-bezier commands so SMIL <animate d> can interpolate.
+// 15 segments: θ = 2π/15 per segment, bezier constant k = (4/3)·tan(θ/4) = (4/3)·tan(π/30)
+const _pf = (v: number) => v.toFixed(2);
+const _N = 15;
+const _STEP = (2 * Math.PI) / _N;
+const _bk = (4 / 3) * Math.tan(Math.PI / 30);
+const CIRCLE_PATH = (() => {
+  let d = "";
+  for (let i = 0; i < _N; i++) {
+    const a0 = i * _STEP,
+      a1 = a0 + _STEP;
+    const x0 = CX + R * Math.cos(a0),
+      y0 = CY + R * Math.sin(a0);
+    const x3 = CX + R * Math.cos(a1),
+      y3 = CY + R * Math.sin(a1);
+    const x1 = x0 - _bk * R * Math.sin(a0),
+      y1 = y0 + _bk * R * Math.cos(a0);
+    const x2 = x3 + _bk * R * Math.sin(a1),
+      y2 = y3 - _bk * R * Math.cos(a1);
+    d +=
+      (i === 0 ? `M${_pf(x0)},${_pf(y0)} ` : "") +
+      `C${_pf(x1)},${_pf(y1)} ${_pf(x2)},${_pf(y2)} ${_pf(x3)},${_pf(y3)} `;
+  }
+  return d + "Z";
+})();
+const POLYGON_PATH = (() => {
+  let d = "";
+  for (let i = 0; i < _N; i++) {
+    const a0 = i * _STEP,
+      a1 = a0 + _STEP;
+    const x0 = CX + R * Math.cos(a0),
+      y0 = CY + R * Math.sin(a0);
+    const x3 = CX + R * Math.cos(a1),
+      y3 = CY + R * Math.sin(a1);
+    // Straight line via cubic bezier: control points at ⅓ and ⅔ along the segment
+    const x1 = x0 + (x3 - x0) / 3,
+      y1 = y0 + (y3 - y0) / 3;
+    const x2 = x0 + (2 * (x3 - x0)) / 3,
+      y2 = y0 + (2 * (y3 - y0)) / 3;
+    d +=
+      (i === 0 ? `M${_pf(x0)},${_pf(y0)} ` : "") +
+      `C${_pf(x1)},${_pf(y1)} ${_pf(x2)},${_pf(y2)} ${_pf(x3)},${_pf(y3)} `;
+  }
+  return d + "Z";
+})();
+
 const MAX_STRIKES = 3;
 const SYNC_INTERVAL_MS = 30_000;
 const AWAY_LIMIT_MS = 30_000;
 const SESSION_KEY = "snitch_session";
 const AWAY_KEY = "snitch_away_at";
 interface SessionSyncData {
-  sessionId: number
-  endEpoch: number
-  totalSeconds: number
-  distractionCount: number
-  distractionFractions: number[]
-  amountCents: number
+  sessionId: number;
+  endEpoch: number;
+  totalSeconds: number;
+  distractionCount: number;
+  distractionFractions: number[];
+  amountCents: number;
 }
 function notifyExtension(active: boolean, sessionData?: SessionSyncData) {
   window.dispatchEvent(
-    new CustomEvent("snitch-session", { detail: { active, ...(sessionData ?? {}) } }),
+    new CustomEvent("snitch-session", {
+      detail: { active, ...(sessionData ?? {}) },
+    }),
   );
 }
 
@@ -148,7 +197,10 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     const ls = cameraMonitor.loadingState;
     const perm = cameraMonitor.permission;
     if (ls !== "ready" && ls !== "error" && perm !== "denied") return;
-    const rem = Math.max(1, Math.floor((pendingEndEpochRef.current - Date.now()) / 1000));
+    const rem = Math.max(
+      1,
+      Math.floor((pendingEndEpochRef.current - Date.now()) / 1000),
+    );
     setSeconds(rem);
     setRunning(true);
     setPendingRun(false);
@@ -312,6 +364,12 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const currentStatus = cameraMonitor.currentStatus;
+  const isTimerActive = running || pendingRun;
+  const isWarning =
+    running && currentStatus === "warning" && distractions.length < MAX_STRIKES;
+  const isDistracted =
+    running &&
+    (currentStatus === "distracted" || distractions.length >= MAX_STRIKES);
 
   // ── Watch camera events for new distraction arc marks ──────────────────
   const lastProcessedEventIdRef = useRef(-1);
@@ -335,7 +393,8 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
       // Arc mark is added by the camera-events effect above when the new event lands
     }
     window.addEventListener("snitch-distraction", onExtensionDistraction);
-    return () => window.removeEventListener("snitch-distraction", onExtensionDistraction);
+    return () =>
+      window.removeEventListener("snitch-distraction", onExtensionDistraction);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Push session state to extension whenever it changes ────────────────
@@ -352,16 +411,23 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         distractionFractions: distractions,
         amountCents,
       });
-    } catch { /* ignore */ }
-  // seconds intentionally excluded — we only need to sync on structural changes
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    } catch {
+      /* ignore */
+    }
+    // seconds intentionally excluded — we only need to sync on structural changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, sessionId, distractions, totalSeconds, amountCents]);
 
   // ── Timer tick ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (running && seconds > 0) {
       intervalRef.current = setInterval(() => {
-        setSeconds(Math.max(0, Math.floor((pendingEndEpochRef.current - Date.now()) / 1000)));
+        setSeconds(
+          Math.max(
+            0,
+            Math.floor((pendingEndEpochRef.current - Date.now()) / 1000),
+          ),
+        );
       }, 1000);
     } else {
       if (intervalRef.current) clearInterval(intervalRef.current);
@@ -386,13 +452,24 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     /* eslint-disable react-hooks/set-state-in-effect */
     setRunning(false);
     setSessionId(null);
-    setSummary({ outcome, reason, amountCents: cents, strikes, totalSeconds: total, elapsedSeconds: total });
+    setSummary({
+      outcome,
+      reason,
+      amountCents: cents,
+      strikes,
+      totalSeconds: total,
+      elapsedSeconds: total,
+    });
     /* eslint-enable react-hooks/set-state-in-effect */
     localStorage.removeItem(SESSION_KEY);
     localStorage.removeItem(AWAY_KEY);
     stopCameraRef.current();
     notifyExtension(false);
-    apiPost(`/sessions/${id}/resolve`, { outcome, elapsed_seconds: total }, token).catch(() => {});
+    apiPost(
+      `/sessions/${id}/resolve`,
+      { outcome, elapsed_seconds: total },
+      token,
+    ).catch(() => {});
   }, [
     running,
     seconds,
@@ -581,7 +658,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
       setLocking(false);
       setPendingRun(true);
     } catch (err) {
-      setLocking(false)
+      setLocking(false);
       if (err instanceof ApiError) {
         if (err.status === 400) setLockError(err.message);
         else if (err.status === 404)
@@ -614,6 +691,10 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         ? "#eab308"
         : "var(--color-primary-fixed-dim)";
 
+  const arcStrokeWidth = isTimerActive ? 12 : 3;
+  // Blink faster as distractions accumulate (1.4s → 0.5s at max strikes)
+  const glowDuration = Math.max(0.5, 1.4 - distractions.length * 0.3);
+
   const canAddRecipient = searchResults.some(
     (r) => r.username.toLowerCase() === recipientInput.trim().toLowerCase(),
   );
@@ -632,33 +713,75 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
           width="320"
           height="320"
           className="absolute pointer-events-none"
-          style={{ transform: "rotate(-90deg) scaleX(1)" }}
+          style={{ transform: "rotate(-90deg) scaleX(1)", overflow: "visible" }}
         >
+          {/* Background track */}
           <circle
             cx={CX}
             cy={CY}
             r={R}
             fill="none"
             stroke="var(--color-outline-variant)"
-            strokeWidth="10"
+            strokeWidth={isTimerActive ? 3 : 2}
             opacity="0.3"
+            style={{
+              transition: "stroke-width 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)",
+            }}
           />
+
+          {/* Normal / warning arc — fades out when distracted */}
           <circle
             cx={CX}
             cy={CY}
             r={R}
             fill="none"
             stroke={arcColor}
-            strokeWidth="10"
+            strokeWidth={arcStrokeWidth}
             strokeLinecap="round"
             strokeDasharray={circumference}
             strokeDashoffset={elapsed * circumference}
-            style={{ transition: "stroke 0.4s ease" }}
+            style={{
+              transition:
+                "stroke 0.4s ease, stroke-width 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.35s ease",
+              opacity: isDistracted ? 0 : 1,
+            }}
           />
+
+          {/* Hexagon ↔ circle morph — fades in when distracted */}
+          <path
+            d={CIRCLE_PATH}
+            fill="none"
+            stroke="#ef4444"
+            strokeWidth={arcStrokeWidth}
+            strokeLinejoin="miter"
+            pathLength={1000}
+            strokeDasharray={1000}
+            strokeDashoffset={elapsed * 1000}
+            style={{
+              transition:
+                "opacity 0.35s ease, stroke-width 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)",
+              opacity: isDistracted ? 1 : 0,
+            }}
+          >
+            <animate
+              attributeName="d"
+              values={`${CIRCLE_PATH};${POLYGON_PATH};${CIRCLE_PATH}`}
+              dur="3s"
+              repeatCount="indefinite"
+              calcMode="spline"
+              keyTimes="0;0.5;1"
+              keySplines="0.45 0 0.55 1;0.45 0 0.55 1"
+            />
+          </path>
+
           {distractions.map((fraction, i) => {
             const pt = fractionToPoint(fraction);
             return (
-              <polygon key={i} points={trianglePoints(pt.x, pt.y)} fill="#ef4444" />
+              <polygon
+                key={i}
+                points={trianglePoints(pt.x, pt.y)}
+                fill="#ef4444"
+              />
             );
           })}
         </svg>
@@ -669,12 +792,16 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         >
           {editing ? (
             <input
-              ref={(el) => { el?.focus(); }}
+              ref={(el) => {
+                el?.focus();
+              }}
               type="text"
               inputMode="decimal"
               value={inputVal}
               placeholder="25"
-              onChange={(e) => setInputVal(e.target.value.replace(/[^\d.]/g, ""))}
+              onChange={(e) =>
+                setInputVal(e.target.value.replace(/[^\d.]/g, ""))
+              }
               onKeyDown={handleInputKey}
               onBlur={() => commitEdit(inputVal)}
               className="w-28 text-center font-display font-semibold text-5xl text-primary tabular-nums bg-transparent outline-none border-b-2 border-primary"
@@ -685,7 +812,9 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
               disabled={running}
               className={[
                 "font-display font-semibold text-5xl tabular-nums disabled:cursor-default transition-colors duration-300",
-                running && (distractions.length >= MAX_STRIKES || currentStatus === "distracted")
+                running &&
+                (distractions.length >= MAX_STRIKES ||
+                  currentStatus === "distracted")
                   ? "text-error"
                   : running && currentStatus === "warning"
                     ? "text-yellow-500"
@@ -699,27 +828,69 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
             {editing
               ? "minutes"
               : running
-                ? (distractions.length > 0
+                ? distractions.length > 0
                   ? `${distractions.length} distraction${distractions.length > 1 ? "s" : ""}`
                   : currentStatus === "warning"
                     ? "⚠ warning"
-                    : "session active")
+                    : "session active"
                 : "deep focus session"}
           </span>
         </div>
+
+        {/* Warning glow — separate top-layer SVG so nothing clips the bloom */}
+        <svg
+          width="320"
+          height="320"
+          className="absolute pointer-events-none"
+          style={{
+            transform: "rotate(-90deg) scaleX(1)",
+            overflow: "visible",
+            zIndex: 15,
+            opacity: isWarning ? undefined : 0,
+            transition: isWarning ? undefined : "opacity 0.35s ease",
+            animation: isWarning
+              ? `warningFlicker ${glowDuration}s ease-in-out infinite`
+              : "none",
+          }}
+        >
+          <circle
+            cx={CX}
+            cy={CY}
+            r={R}
+            fill="none"
+            stroke="#eab308"
+            strokeWidth={arcStrokeWidth + 8}
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={elapsed * circumference}
+            style={{ filter: "blur(14px)" }}
+          />
+        </svg>
       </div>
+
+      <br></br>
 
       {/* Info cards */}
       <br></br>
-  
-      <div className="flex gap-5 w-full max-w-2xl">
 
+      <div className="flex gap-5 w-full max-w-2xl">
         {/* On the line */}
         <div className="flex-1 bg-white/90 rounded-2xl border border-outline-variant p-5 shadow-sm">
           <div className="flex items-center justify-between mb-3">
-            <span className="font-body text-sm text-on-surface-variant font-medium">On the line</span>
+            <span className="font-body text-sm text-on-surface-variant font-medium">
+              On the line
+            </span>
             <div className="w-7 h-7 rounded-full bg-primary-fixed flex items-center justify-center flex-shrink-0">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="var(--color-primary)"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <rect x="2" y="5" width="20" height="14" rx="2" />
                 <line x1="2" y1="10" x2="22" y2="10" />
               </svg>
@@ -730,7 +901,9 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
           </div>
           {!running ? (
             <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-outline-variant">
-              <span className="font-body text-on-surface-variant text-xs">$</span>
+              <span className="font-body text-on-surface-variant text-xs">
+                $
+              </span>
               <input
                 type="number"
                 min="0"
@@ -740,7 +913,9 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
                 onChange={(e) => setAmount(e.target.value)}
                 className="bg-transparent font-body text-sm text-on-surface w-20 outline-none placeholder:text-outline-variant tabular-nums"
               />
-              <span className="font-body text-xs text-on-surface-variant">on the line</span>
+              <span className="font-body text-xs text-on-surface-variant">
+                on the line
+              </span>
             </div>
           ) : (
             <p className="font-body text-xs text-on-surface-variant">
@@ -752,14 +927,25 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         {/* Doubters */}
         <div className="flex-1 bg-white/90 rounded-2xl border border-outline-variant p-5 shadow-sm">
           <div className="flex items-center justify-between mb-3">
-            <span className="font-body text-sm text-on-surface-variant font-medium">Doubters</span>
+            <span className="font-body text-sm text-on-surface-variant font-medium">
+              Doubters
+            </span>
             {!running && (
               <button
                 onClick={openModal}
                 className="w-7 h-7 rounded-full bg-primary-fixed flex items-center justify-center hover:bg-primary-container transition-colors flex-shrink-0"
                 title="Add doubter"
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="var(--color-primary)"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
                   <circle cx="9" cy="7" r="4" />
                   <line x1="19" y1="8" x2="19" y2="14" />
@@ -770,16 +956,27 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {recipients.map(({ username }, i) => {
-              const sessionFailed = running && distractions.length >= MAX_STRIKES;
+              const sessionFailed =
+                running && distractions.length >= MAX_STRIKES;
               const base = Math.floor(amountCents / recipients.length);
-              const share = i === recipients.length - 1
-                ? amountCents - base * (recipients.length - 1)
-                : base;
+              const share =
+                i === recipients.length - 1
+                  ? amountCents - base * (recipients.length - 1)
+                  : base;
               return (
-                <div key={username} className="flex flex-col items-center gap-0.5">
+                <div
+                  key={username}
+                  className="flex flex-col items-center gap-0.5"
+                >
                   <button
-                    onClick={() => { if (!running) removeRecipient(username); }}
-                    title={running ? `@${username}` : `@${username} — click to remove`}
+                    onClick={() => {
+                      if (!running) removeRecipient(username);
+                    }}
+                    title={
+                      running
+                        ? `@${username}`
+                        : `@${username} — click to remove`
+                    }
                     className={[
                       "w-10 h-10 rounded-full border-2 flex items-center justify-center text-xs font-display font-semibold transition-colors duration-300",
                       sessionFailed
@@ -827,7 +1024,16 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         </div>
       ) : pendingRun ? (
         <div className="flex items-center justify-center gap-2 font-body text-sm text-on-surface-variant">
-          <svg className="animate-spin flex-shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <svg
+            className="animate-spin flex-shrink-0"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          >
             <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
           </svg>
           Loading detection models… ({cameraMonitor.loadingStep}/4)
@@ -845,7 +1051,9 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
 
       {import.meta.env.DEV && running && (
         <button
-          onClick={() => { addArcMark(); }}
+          onClick={() => {
+            addArcMark();
+          }}
           className="text-xs text-error border border-error rounded px-3 py-1 opacity-60 hover:opacity-100 transition-opacity"
         >
           [dev] distracted
@@ -873,7 +1081,9 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
             <div className="flex items-center gap-2 border-b-2 border-primary pb-2">
               <span className="font-body text-on-surface-variant">@</span>
               <input
-                ref={(el) => { el?.focus(); }}
+                ref={(el) => {
+                  el?.focus();
+                }}
                 type="text"
                 placeholder="username"
                 value={recipientInput}
@@ -919,11 +1129,13 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
               </div>
             )}
 
-            {recipientInput.trim() && !searching && searchResults.length === 0 && (
-              <p className="font-body text-xs text-on-surface-variant text-center">
-                No users found.
-              </p>
-            )}
+            {recipientInput.trim() &&
+              !searching &&
+              searchResults.length === 0 && (
+                <p className="font-body text-xs text-on-surface-variant text-center">
+                  No users found.
+                </p>
+              )}
 
             <div className="flex gap-3">
               <Button variant="ghost" fullWidth onClick={closeModal}>
@@ -948,11 +1160,15 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
           <div className="absolute inset-0 bg-black/60" />
           <div className="relative w-full max-w-sm mx-4 bg-surface rounded-3xl px-6 pt-8 pb-6 flex flex-col gap-5 shadow-2xl">
             <div className="text-center">
-              <div className={`text-5xl mb-3 font-bold ${summary.outcome === "completed" ? "text-primary" : "text-error"}`}>
+              <div
+                className={`text-5xl mb-3 font-bold ${summary.outcome === "completed" ? "text-primary" : "text-error"}`}
+              >
                 {summary.outcome === "completed" ? "✓" : "✗"}
               </div>
               <h2 className="font-display font-bold text-2xl text-on-surface">
-                {summary.outcome === "completed" ? "Session Complete" : "Session Failed"}
+                {summary.outcome === "completed"
+                  ? "Session Complete"
+                  : "Session Failed"}
               </h2>
               <p className="font-body text-sm text-on-surface-variant mt-1">
                 {summary.reason}
@@ -964,23 +1180,40 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
                 label="Time focused"
                 value={`${formatTime(Math.max(0, summary.elapsedSeconds - summary.strikes * 10))} / ${formatTime(summary.totalSeconds)}`}
               />
-              <SummaryRow label="Distractions" value={String(summary.strikes)} />
               <SummaryRow
-                label={summary.outcome === "completed" ? "Amount kept" : "Amount lost"}
+                label="Distractions"
+                value={String(summary.strikes)}
+              />
+              <SummaryRow
+                label={
+                  summary.outcome === "completed"
+                    ? "Amount kept"
+                    : "Amount lost"
+                }
                 value={`$${(summary.amountCents / 100).toFixed(2)}`}
-                valueClass={summary.outcome === "completed" ? "text-primary" : "text-error"}
+                valueClass={
+                  summary.outcome === "completed"
+                    ? "text-primary"
+                    : "text-error"
+                }
               />
               {summary.outcome === "failed" && recipients.length > 0 && (
                 <>
                   <div className="border-t border-outline-variant" />
                   <div className="flex items-start justify-around gap-2 flex-wrap">
                     {recipients.map(({ username }, i) => {
-                      const base = Math.floor(summary.amountCents / recipients.length);
-                      const share = i === recipients.length - 1
-                        ? summary.amountCents - base * (recipients.length - 1)
-                        : base;
+                      const base = Math.floor(
+                        summary.amountCents / recipients.length,
+                      );
+                      const share =
+                        i === recipients.length - 1
+                          ? summary.amountCents - base * (recipients.length - 1)
+                          : base;
                       return (
-                        <div key={username} className="flex flex-col items-center gap-1">
+                        <div
+                          key={username}
+                          className="flex flex-col items-center gap-1"
+                        >
                           <div className="w-10 h-10 rounded-full border-2 border-error bg-error-container flex items-center justify-center text-xs font-display font-semibold text-on-error-container">
                             {username.slice(0, 2).toUpperCase()}
                           </div>

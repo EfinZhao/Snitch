@@ -1,0 +1,19 @@
+# Secrets
+chromeExtension/config.js
+backend/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+dist/
+*.egg-info/
+
+# Node
+node_modules/
+frontend/snitch/dist/
+
+# OS
+.DS_Store

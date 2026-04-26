@@ -12,6 +12,7 @@
   ],
   "host_permissions": [
     "http://localhost:8000/*",
+    "https://generativelanguage.googleapis.com/*",
     "<all_urls>"
   ],
   "background": {
@@ -34,6 +35,11 @@
     {
       "matches": ["http://localhost:*/*", "https://localhost:*/*"],
       "js": ["content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["overlay.js"],
       "run_at": "document_idle"
     }
   ]

@@ -138,3 +138,9 @@ body {
   min-height: 100dvh;
   background: var(--color-background);
 }
+
+/* Warning glow flicker on the timer arc */
+@keyframes warningFlicker {
+  0%, 100% { opacity: 0.75; }
+  50% { opacity: 0.08; }
+}

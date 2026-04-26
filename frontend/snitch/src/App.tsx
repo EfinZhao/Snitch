@@ -145,12 +145,13 @@ function clearLaunchParamsFromUrl(): void {
   window.history.replaceState(null, "", next);
 }
 
-const OUTER = "min-h-dvh bg-gradient-to-br from-[#f0f4f9] to-[#e8f0f9] flex flex-col";
+const OUTER =
+  "min-h-dvh bg-gradient-to-br from-[#f0f4f9] to-[#e8f0f9] flex flex-col";
 const AUTH_OUTER = "min-h-dvh bg-surface flex justify-center items-center";
 const AUTH_INNER = [
   "flex flex-col w-full h-full",
-  "sm:max-w-[360px] sm:h-auto sm:shadow-xl sm:rounded-2xl",
-  "bg-surface",
+  "sm:max-w-[360px] sm:h-auto sm:rounded-2xl",
+  "bg-surface shadow-none",
 ].join(" ");
 const INNER = "flex flex-col w-full flex-1";
 
@@ -218,7 +219,16 @@ function Shell({
             className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors"
             aria-label="Notifications"
           >
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+            <svg
+              width="17"
+              height="17"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
               <path d="M13.73 21a2 2 0 0 1-3.46 0" />
             </svg>
@@ -229,7 +239,17 @@ function Shell({
             onClick={onSignOut}
             title={`Signed in as @${user.username}`}
           >
-            <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="text-on-surface-variant">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 20 20"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="text-on-surface-variant"
+            >
               <circle cx="10" cy="7" r="3.5" />
               <path d="M3 18c0-3.866 3.134-7 7-7s7 3.134 7 7" />
             </svg>
@@ -484,10 +504,12 @@ export default function App() {
   const [token, setToken] = useState<string | null>(() =>
     localStorage.getItem("snitch_token"),
   );
-  const [launchToken, setLaunchToken] = useState<string | null>(launchParams.launchToken);
-  const [pendingAutoStartSessionId, setPendingAutoStartSessionId] = useState<number | null>(
-    launchParams.autoStartSessionId,
+  const [launchToken, setLaunchToken] = useState<string | null>(
+    launchParams.launchToken,
   );
+  const [pendingAutoStartSessionId, setPendingAutoStartSessionId] = useState<
+    number | null
+  >(launchParams.autoStartSessionId);
   const [user, setUser] = useState<UserProfile | null>(null);
   // userLoading only applies when a token exists and we haven't fetched the profile yet
   const [userLoading, setUserLoading] = useState(!!token);
@@ -517,9 +539,12 @@ export default function App() {
   // override stale sessions from a different user.
   useEffect(() => {
     if (!launchToken) return;
-    apiPost<{ access_token: string; token_type: string }>("/auth/launch-login", {
-      launch_token: launchToken,
-    })
+    apiPost<{ access_token: string; token_type: string }>(
+      "/auth/launch-login",
+      {
+        launch_token: launchToken,
+      },
+    )
       .then(({ access_token }) => {
         localStorage.setItem("snitch_token", access_token);
         setToken(access_token);
@@ -546,8 +571,14 @@ export default function App() {
         const existingRaw = localStorage.getItem("snitch_session");
         if (existingRaw) {
           try {
-            const existing = JSON.parse(existingRaw) as { sessionId?: number; endEpoch?: number };
-            const rem = Math.max(0, Math.floor(((existing.endEpoch ?? 0) - Date.now()) / 1000));
+            const existing = JSON.parse(existingRaw) as {
+              sessionId?: number;
+              endEpoch?: number;
+            };
+            const rem = Math.max(
+              0,
+              Math.floor(((existing.endEpoch ?? 0) - Date.now()) / 1000),
+            );
             if (existing.sessionId !== sessionId && rem > 0) return;
           } catch {}
         }
@@ -565,7 +596,9 @@ export default function App() {
             endEpoch: Date.now() + remaining * 1000,
             durationSeconds: session.duration_seconds,
             amountCents: session.amount_cents,
-            recipientUsernames: session.recipients.map((r) => r.recipient_username),
+            recipientUsernames: session.recipients.map(
+              (r) => r.recipient_username,
+            ),
             distractionFractions: [],
           }),
         );
@@ -595,7 +628,7 @@ export default function App() {
     setToken(newToken);
   }
 
-  const navigate = (s: Screen) => setScreen(s)
+  const navigate = (s: Screen) => setScreen(s);
 
   const cameraMonitor = useCameraMonitor(token);
 
@@ -656,7 +689,10 @@ export default function App() {
             <FocusStats navigate={navigate} token={token} user={activeUser} />
           )}
           {screen === "monitor" && (
-            <DistractionMonitor navigate={navigate} cameraMonitor={cameraMonitor} />
+            <DistractionMonitor
+              navigate={navigate}
+              cameraMonitor={cameraMonitor}
+            />
           )}
           {screen === "settings" && (
             <FocusSettings

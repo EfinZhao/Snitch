@@ -1,3 +1,5 @@
+importScripts("config.js");
+
 const API_BASE = "http://localhost:8000/api";
 const SESSION_CHECK_ALARM = "check-active-session";
 const SESSION_CHECK_INTERVAL_MIN = 0.5; // 30 seconds
@@ -86,51 +88,61 @@ function notifyFrontendTabs(message) {
   });
 }
 
-// Ask the backend whether a URL is a distraction during an active session.
-// Always attempts page-content extraction; falls back gracefully.
-// Cache key is the full URL so per-video/per-article results aren't conflated.
-async function classifyUrl(tabId, url, domain, pageTitle, sessionId, token) {
-  if (classifyCache.has(url)) {
-    console.log(`[Snitch classify] cache hit — ${domain} → ${classifyCache.get(url) ? "BLOCK" : "allow"}`);
-    return classifyCache.get(url);
+// Ask Gemini whether a domain is a distraction, based solely on Gemini's knowledge of the site.
+// Cache key is the domain so repeated visits don't re-query.
+async function classifyUrl(domain) {
+  if (classifyCache.has(domain)) {
+    console.log(`[Snitch classify] cache hit — ${domain} → ${classifyCache.get(domain) ? "BLOCK" : "allow"}`);
+    return classifyCache.get(domain);
   }
 
-  let pageText = null;
-  try {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => (document.body.innerText || "").slice(0, 600).trim(),
-    });
-    pageText = results?.[0]?.result || null;
-  } catch {
-    // scripting unavailable (e.g. chrome:// pages) — continue without it
+  const prompt =
+    `You are a strict focus session monitor. Using only your prior knowledge of the website "${domain}", ` +
+    `decide if it is a distraction from productive work.\n\n` +
+    `Block (YES): social media, video/music streaming, online games, browser games, entertainment, forums, shopping, news.\n` +
+    `Allow (NO): documentation, coding tools, academic resources, productivity tools, work software.\n` +
+    `Do NOT consider page content — judge the site by what it is known to be.\n` +
+    `When unsure, answer YES.\n\n` +
+    `Explain your reasoning in 1-2 sentences, then end your response with FINAL_ANSWER={YES} or FINAL_ANSWER={NO}.`;
+
+  if (!GEMINI_API_KEY) {
+    console.error("[Snitch classify] GEMINI_API_KEY is not set — config.js may not have loaded");
+    return false;
   }
 
-  const body = { domain, page_title: pageTitle || "" };
-  if (pageText) body.page_text = pageText;
-
-  console.log(`[Snitch classify] → POST /sessions/${sessionId}/classify  domain=${domain}  title="${pageTitle}"  pageText=${pageText ? pageText.length + " chars" : "none"}`);
+  console.log(`[Snitch classify] → Gemini  domain=${domain}`);
 
   try {
-    const res = await fetch(`${API_BASE}/sessions/${sessionId}/classify`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(body),
-    });
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            maxOutputTokens: 500,
+            temperature: 0,
+            thinkingConfig: { thinkingBudget: 0 },
+          },
+        }),
+      }
+    );
     if (!res.ok) {
-      console.warn(`[Snitch classify] ✗ HTTP ${res.status} for ${domain}`);
+      const errBody = await res.text();
+      console.warn(`[Snitch classify] ✗ Gemini HTTP ${res.status} for ${domain}:`, errBody);
       return false;
     }
     const data = await res.json();
-    const block = !!data.block;
-    classifyCache.set(url, block);
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+    console.log(`[Snitch classify] Gemini reasoning for ${domain}:\n${text}`);
+    const match = text.match(/FINAL_ANSWER=\{(YES|NO)\}/i);
+    const block = match ? match[1].toUpperCase() === "YES" : false;
+    classifyCache.set(domain, block);
     console.log(`[Snitch classify] ← ${block ? "BLOCK" : "allow"}  ${domain}`);
     return block;
   } catch (err) {
-    console.error(`[Snitch classify] fetch failed for ${domain}:`, err);
+    console.error(`[Snitch classify] Gemini call failed for ${domain}:`, err);
     return false;
   }
 }
@@ -202,7 +214,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  // ── Camera alert from web app → Chrome notification ────────────────────
+  // ── Camera alert from web app → in-page overlay + Chrome notification ───
   if (message.type === "SNITCH_ALERT") {
     chrome.storage.local.get(["activeSession"], (result) => {
       if (!result.activeSession) return;
@@ -212,19 +224,33 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const categoryLabel =
         ALERT_CATEGORY_LABELS[message.category] || message.category;
 
-      // Rate-limit warnings — don't spam a notification every inference frame
+      // Rate-limit warnings — don't spam every inference frame
       if (!isStrike) {
         if (now - lastWarningNotificationAt < WARNING_NOTIFICATION_COOLDOWN_MS) return;
         lastWarningNotificationAt = now;
       }
 
+      const overlayTitle = isStrike ? "Strike Recorded" : "Heads Up";
+      const overlayMsg = isStrike
+        ? `${categoryLabel} detected. A strike has been added to your session.`
+        : `${categoryLabel}. Refocus before it counts as a strike.`;
+
+      // In-page overlay on the web app tab (highest priority)
+      if (_sender?.tab?.id) {
+        chrome.tabs.sendMessage(_sender.tab.id, {
+          type: isStrike ? "SHOW_DISTRACTION_OVERLAY" : "SHOW_WARNING_OVERLAY",
+          title: overlayTitle,
+          message: overlayMsg,
+          hostname: "",
+        }).catch(() => {});
+      }
+
+      // Chrome notification as fallback
       chrome.notifications.create(`snitch-alert-${now}`, {
         type: "basic",
         iconUrl: "icons/icon128.png",
-        title: isStrike ? "Snitch — Distraction Recorded" : "Snitch — Heads up",
-        message: isStrike
-          ? `${categoryLabel} detected. A strike has been added to your session.`
-          : `${categoryLabel}. Refocus before it counts as a strike.`,
+        title: isStrike ? "Snitch — Strike Recorded" : "Snitch — Heads Up",
+        message: overlayMsg,
         priority: isStrike ? 2 : 0,
         requireInteraction: isStrike,
       });
@@ -241,12 +267,13 @@ function shouldBlock(result) {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete" || !tab.url) return;
+  if (tab.url.startsWith("chrome-extension://") || tab.url.startsWith("chrome://")) return;
 
   const hostname = extractHostname(tab.url);
   if (!hostname) return;
 
   chrome.storage.local.get(
-    ["blocklist", "visitLog", "blockingEnabled", "authToken", "activeSession", "sessionId"],
+    ["blocklist", "visitLog", "blockingEnabled", "authToken", "activeSession"],
     (result) => {
       const blocklist = result.blocklist || [];
       const isFlagged = isFlaggedSite(hostname, blocklist);
@@ -268,6 +295,12 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
         if (result.activeSession) {
           notifyFrontendTabs({ type: "EXTENSION_DISTRACTION", hostname, url: tab.url });
+
+          // In-page overlay on the distraction tab (highest priority)
+          chrome.tabs.sendMessage(tabId, {
+            type: "SHOW_DISTRACTION_OVERLAY",
+            hostname,
+          }).catch(() => {});
         }
 
         chrome.action.setBadgeText({ text: "!", tabId });
@@ -289,23 +322,30 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       }
 
       // ── AI classification during active session ────────────────────────
-      if (result.activeSession && result.authToken && result.sessionId) {
+      if (result.activeSession) {
         (async () => {
-          const shouldAiBlock = await classifyUrl(
-            tabId, tab.url, hostname, tab.title || "",
-            result.sessionId, result.authToken
-          );
+          const shouldAiBlock = await classifyUrl(hostname);
           if (!shouldAiBlock) return;
 
-          const blockedUrl = chrome.runtime.getURL(
-            `blocked.html?site=${encodeURIComponent(hostname)}&ai=1`
-          );
-          chrome.tabs.update(tabId, { url: blockedUrl }).catch(() => {});
-
-          // For sites not already on the manual blocklist, report + log the distraction
+          // Flag as distraction but do not redirect — session is active
           if (!isFlagged) {
             reportDistraction(hostname, tab.url, result.authToken);
             notifyFrontendTabs({ type: "EXTENSION_DISTRACTION", hostname, url: tab.url });
+
+            // In-page overlay on the distraction tab (highest priority)
+            chrome.tabs.sendMessage(tabId, {
+              type: "SHOW_DISTRACTION_OVERLAY",
+              hostname,
+            }).catch(() => {});
+
+            chrome.notifications.create(`snitch-ai-${Date.now()}`, {
+              type: "basic",
+              iconUrl: "icons/icon128.png",
+              title: "Snitch — Distraction Detected",
+              message: `${hostname} was flagged as a distraction.`,
+              priority: 2,
+            });
+
             chrome.storage.local.get(["visitLog"], (r) => {
               const log = r.visitLog || [];
               log.unshift({ url: tab.url, hostname, timestamp: Date.now(), aiBlocked: true });
