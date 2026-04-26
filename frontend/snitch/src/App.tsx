@@ -1,9 +1,11 @@
 import { useState, useEffect } from "react";
 import FocusDashboard from "./components/screens/FocusDashboard";
 import FocusStats from "./components/screens/FocusStats";
+import FocusSettings from "./components/screens/FocusSettings";
 import DistractionMonitor from "./components/screens/DistractionMonitor";
 import AuthScreen from "./components/screens/AuthScreen";
 import StripeCardForm from "./components/StripeCardForm";
+import { useCameraMonitor } from "./hooks/useCameraMonitor";
 import { apiGet, apiPost } from "./api/client";
 import type { Screen, StakeRead, UserProfile } from "./types";
 
@@ -144,11 +146,16 @@ function clearLaunchParamsFromUrl(): void {
 }
 
 const OUTER = "h-dvh bg-surface-dim flex justify-center sm:py-8 lg:py-0";
+const AUTH_OUTER = "h-dvh bg-surface flex justify-center items-center";
+const AUTH_INNER = [
+  "flex flex-col w-full h-full",
+  "sm:max-w-[33vw] sm:max-h-[720px]",
+  "bg-surface",
+].join(" ");
 const INNER = [
   "flex flex-col w-full h-full",
   "sm:max-w-[480px] sm:rounded-2xl sm:overflow-hidden",
-  "sm:shadow-[0_8px_40px_-8px_rgba(0,0,0,0.18)]",
-  "lg:max-w-full lg:rounded-none lg:shadow-none",
+  "lg:max-w-full lg:rounded-none",
   "bg-surface",
 ].join(" ");
 
@@ -585,7 +592,9 @@ export default function App() {
     setToken(newToken);
   }
 
-  const navigate = (s: Screen) => setScreen(s);
+  const navigate = (s: Screen) => setScreen(s)
+
+  const cameraMonitor = useCameraMonitor(token);
 
   // ── Loading splash ───────────────────────────────────────────────────────
   if (userLoading) {
@@ -601,8 +610,8 @@ export default function App() {
   // ── Auth gate ────────────────────────────────────────────────────────────
   if (!token || !activeUser) {
     return (
-      <div className={OUTER}>
-        <div className={INNER}>
+      <div className={AUTH_OUTER}>
+        <div className={AUTH_INNER}>
           <AuthScreen onAuthenticated={handleAuthenticated} />
         </div>
       </div>
@@ -639,32 +648,23 @@ export default function App() {
               navigate={navigate}
               token={token}
               user={activeUser}
+              cameraMonitor={cameraMonitor}
             />
           )}
           {screen === "stats" && (
             <FocusStats navigate={navigate} token={token} user={activeUser} />
           )}
           {screen === "monitor" && (
-            <DistractionMonitor navigate={navigate} token={token} />
+            <DistractionMonitor navigate={navigate} cameraMonitor={cameraMonitor} />
           )}
           {screen === "settings" && (
-            <div className="flex flex-col items-center justify-center h-full gap-3 text-on-surface-variant">
-              <svg
-                width="40"
-                height="40"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="opacity-40"
-              >
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-              <p className="font-body italic text-sm">Settings coming soon.</p>
-            </div>
+            <FocusSettings
+              navigate={navigate}
+              token={token}
+              user={activeUser}
+              onSignOut={signOut}
+              onUserUpdate={setUser}
+            />
           )}
         </Shell>
       </div>

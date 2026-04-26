@@ -6,7 +6,7 @@ from app.api.deps import CurrentUserDep
 from app.core.database import SessionDep
 from app.core.security import hash_password
 from app.models.user import User
-from app.schemas.user import DiscordAccountStatus, DiscordLinkRequest, UserCreate, UserRead, UserSearchResult
+from app.schemas.user import DiscordAccountStatus, DiscordLinkRequest, UserCreate, UserRead, UserSearchResult, UserUpdate
 
 router = APIRouter()
 
@@ -31,6 +31,22 @@ async def create_user(body: UserCreate, session: SessionDep):
 
 @router.get('/me', response_model=UserRead)
 async def get_me(user: CurrentUserDep):
+    return UserRead.model_validate(user)
+
+
+@router.patch('/me', response_model=UserRead)
+async def update_me(body: UserUpdate, user: CurrentUserDep, session: SessionDep):
+    cleaned = body.username.strip().lower()
+    if not cleaned:
+        raise HTTPException(status_code=422, detail='Username cannot be empty')
+    user.username = cleaned
+    session.add(user)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail='Username already taken')
+    await session.refresh(user)
     return UserRead.model_validate(user)
 
 

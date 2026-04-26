@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import Button from '../atoms/Button'
 import { apiPost, apiGet, apiPatch, ApiError } from '../../api/client'
-import { useDistractionDetection } from '../../hooks/useDistractionDetection'
+import type { CameraMonitorState } from '../../hooks/useCameraMonitor'
 import type { Screen, UserProfile, StakeRead } from '../../types'
 
 const DEFAULT_SECONDS = 25 * 60
@@ -69,9 +69,10 @@ interface Props {
   navigate: (screen: Screen) => void
   token: string
   user: UserProfile
+  cameraMonitor: CameraMonitorState
 }
 
-export default function FocusDashboard({ token, user }: Props) {
+export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
   const [totalSeconds, setTotalSeconds] = useState(DEFAULT_SECONDS)
   const [seconds, setSeconds] = useState(DEFAULT_SECONDS)
   const [running, setRunning] = useState(false)
@@ -100,10 +101,6 @@ export default function FocusDashboard({ token, user }: Props) {
   const [searching, setSearching] = useState(false)
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Distraction detection
-  const videoRef = useRef<HTMLVideoElement | null>(null)
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-
   // Refs for stale-closure-safe event handlers (set up with [] deps)
   const stakeIdRef = useRef<number | null>(null)
   const secondsRef = useRef(DEFAULT_SECONDS)
@@ -111,6 +108,8 @@ export default function FocusDashboard({ token, user }: Props) {
   const distractionsRef = useRef<number[]>([])
   const amountCentsRef = useRef(0)
   const tokenRef = useRef(token)
+  const startCameraRef = useRef(cameraMonitor.startCamera)
+  const stopCameraRef = useRef(cameraMonitor.stopCamera)
 
   // Keep refs in sync after every render
   useEffect(() => {
@@ -120,6 +119,8 @@ export default function FocusDashboard({ token, user }: Props) {
     distractionsRef.current = distractions
     amountCentsRef.current = amountCents
     tokenRef.current = token
+    startCameraRef.current = cameraMonitor.startCamera
+    stopCameraRef.current = cameraMonitor.stopCamera
   })
 
   // ── Session recovery on mount ───────────────────────────────────────────
@@ -169,7 +170,6 @@ export default function FocusDashboard({ token, user }: Props) {
     setAmountCents(session.amountCents)
     setRecipients(session.recipientUsernames.map(u => ({ username: u })))
     setRunning(true)
-    notifyExtension(true)
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [])
 
@@ -213,7 +213,6 @@ export default function FocusDashboard({ token, user }: Props) {
         })
         setRunning(false)
         setStakeId(null)
-        notifyExtension(false)
         apiPost(`/stakes/${id}/resolve`, { outcome: 'failed', elapsed_seconds: elapsed }, tokenRef.current).catch(() => {})
       } else {
         // Recompute remaining from endEpoch — source of truth
@@ -247,40 +246,19 @@ export default function FocusDashboard({ token, user }: Props) {
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { currentStatus } = useDistractionDetection({
-    active: running,
-    videoRef,
-    canvasRef,
-    onStrike: (category) => injectDistraction(category),
-  })
+  const currentStatus = cameraMonitor.currentStatus
 
-  // ── Camera: start when session starts, stop when it ends ───────────────
+  // ── Watch camera events for new distraction arc marks ──────────────────
+  const lastProcessedEventIdRef = useRef(-1)
   useEffect(() => {
-    const video = videoRef.current
-    if (!running) {
-      if (video?.srcObject) {
-        ;(video.srcObject as MediaStream).getTracks().forEach(t => t.stop())
-        video.srcObject = null
-      }
-      return
-    }
-    let cancelled = false
-    let stream: MediaStream | null = null
-    navigator.mediaDevices
-      .getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } })
-      .then(s => {
-        stream = s
-        if (cancelled || !videoRef.current) { s.getTracks().forEach(t => t.stop()); return }
-        videoRef.current.srcObject = s
-        videoRef.current.play().catch(() => {})
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
-      stream?.getTracks().forEach(t => t.stop())
-      if (video) video.srcObject = null
-    }
-  }, [running])
+    const latest = cameraMonitor.events[0]
+    if (!latest || latest.stage !== 'distracted') return
+    if (latest.id <= lastProcessedEventIdRef.current) return
+    if (!stakeIdRef.current) return
+    lastProcessedEventIdRef.current = latest.id
+    addArcMark()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraMonitor.events])
 
   // ── Timer tick ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -306,7 +284,6 @@ export default function FocusDashboard({ token, user }: Props) {
     /* eslint-enable react-hooks/set-state-in-effect */
     localStorage.removeItem(SESSION_KEY)
     localStorage.removeItem(AWAY_KEY)
-    notifyExtension(false)
     apiPost(`/stakes/${id}/resolve`, { outcome: 'completed', elapsed_seconds: total }, token).catch(() => {})
   }, [running, seconds, stakeId, totalSeconds, token, amountCents, distractions.length])
 
@@ -354,11 +331,8 @@ export default function FocusDashboard({ token, user }: Props) {
     if (e.key === 'Escape') { committingRef.current = true; setEditing(false); setInputVal('') }
   }
 
-  function injectDistraction(category: import('../../utils/distractionAnalyzer').DistractionCategory = 'looking_away') {
-    const fraction = (totalSeconds - seconds) / totalSeconds
-    if (stakeId !== null) {
-      apiPost<void>('/stakes/report-distraction', { hostname: category, url: `snitch://distraction/${category}` }, token).catch(() => {})
-    }
+  function addArcMark() {
+    const fraction = (totalSecondsRef.current - secondsRef.current) / totalSecondsRef.current
     setDistractions(prev => {
       const updated = [...prev, fraction]
       const raw = localStorage.getItem(SESSION_KEY)
@@ -442,7 +416,6 @@ export default function FocusDashboard({ token, user }: Props) {
       setAmountCents(cents)
       setStakeId(stake.id)
       setRunning(true)
-      notifyExtension(true)
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.status === 400) setLockError(err.message)
@@ -481,10 +454,6 @@ export default function FocusDashboard({ token, user }: Props) {
 
   return (
     <div className="flex flex-col items-center px-6 py-6 gap-5">
-      {/* Hidden camera feed for distraction detection */}
-      <video ref={videoRef} width={640} height={480} playsInline muted className="hidden" />
-      <canvas ref={canvasRef} width={640} height={480} className="hidden" />
-
       <br />
 
       {/* Clock face */}
@@ -623,7 +592,7 @@ export default function FocusDashboard({ token, user }: Props) {
 
       {import.meta.env.DEV && running && (
         <button
-          onClick={() => injectDistraction()}
+          onClick={() => { cameraMonitor.handleStrike('phone_detected'); addArcMark() }}
           className="text-xs text-error border border-error rounded px-3 py-1 opacity-60 hover:opacity-100 transition-opacity"
         >
           [dev] distracted
