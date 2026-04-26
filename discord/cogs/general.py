@@ -382,7 +382,7 @@ class General(commands.Cog, name='general'):
             ) as response:
                 if response.status not in {200, 201}:
                     detail = await response.text()
-                    return False, f'Add recipient failed ({response.status}): {detail[:300]}'
+                    return False, f'Add doubter failed ({response.status}): {detail[:300]}'
                 return True, ''
 
     async def _get_session_via_api(
@@ -678,7 +678,7 @@ class General(commands.Cog, name='general'):
 
     @commands.hybrid_command(
         name="session",
-        description="Create a session session and invite recipients.",
+        description="Create a session session and invite doubters.",
     )
     async def session(self, context: Context) -> None:
         if context.guild is None:
@@ -927,8 +927,8 @@ class General(commands.Cog, name='general'):
             await prompt_message.edit(
                 embed=make_snitch_embed(
                     "Session is ready.\n"
-                    "Recipients are locked because you chose mention mode.\n"
-                    f"Recipients: {mention_text}\n"
+                    "Doubters are locked because you chose mention mode.\n"
+                    f"Doubters: {mention_text}\n"
                     "Use the button below to open Snitch, sign in with Discord, and auto-start the session."
                 ),
                 view=start_view,
