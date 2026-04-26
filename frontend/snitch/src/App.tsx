@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useAuth0 } from "@auth0/auth0-react";
 import FocusDashboard from "./components/screens/FocusDashboard";
 import FocusStats from "./components/screens/FocusStats";
 import FocusSettings from "./components/screens/FocusSettings";
@@ -6,7 +7,8 @@ import DistractionMonitor from "./components/screens/DistractionMonitor";
 import AuthScreen from "./components/screens/AuthScreen";
 import StripeCardForm from "./components/StripeCardForm";
 import { useCameraMonitor } from "./hooks/useCameraMonitor";
-import { apiGet, apiPost } from "./api/client";
+import { useToken } from "./hooks/useToken";
+import { apiGet, apiPost, apiPatch } from "./api/client";
 import type { Screen, SessionRead, UserProfile } from "./types";
 
 const NAV = [
@@ -487,24 +489,41 @@ function SetupScreen({
 // ── Root app ──────────────────────────────────────────────────────────────────
 
 export default function App() {
+  const { isAuthenticated, isLoading: auth0Loading, logout } = useAuth0();
+  const { token: auth0Token, tokenLoading } = useToken();
+
   const launchParams = parseLaunchParams();
-  const [token, setToken] = useState<string | null>(() =>
-    localStorage.getItem("snitch_token"),
-  );
   const [launchToken, setLaunchToken] = useState<string | null>(launchParams.launchToken);
+  const [legacyToken, setLegacyToken] = useState<string | null>(null);
   const [pendingAutoStartSessionId, setPendingAutoStartSessionId] = useState<number | null>(
     launchParams.autoStartSessionId,
   );
   const [user, setUser] = useState<UserProfile | null>(null);
-  // userLoading only applies when a token exists and we haven't fetched the profile yet
-  const [userLoading, setUserLoading] = useState(!!token);
+  const [userLoading, setUserLoading] = useState(false);
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [dashboardRenderKey, setDashboardRenderKey] = useState(0);
+
+  // The active token: Auth0 token for normal users, legacy token for bot launches
+  const token = legacyToken ?? auth0Token;
+
+  // Link Discord account after Auth0 redirect (discord_uid stored in appState)
+  useEffect(() => {
+    if (!token || !isAuthenticated) return;
+    const params = new URLSearchParams(window.location.search);
+    const discordUid = params.get('discord_uid') ?? params.get('discordId') ?? params.get('uid');
+    if (!discordUid || !/^\d+$/.test(discordUid)) return;
+    apiPatch('/users/me/discord-link', { discord_uid: Number(discordUid) }, token).catch(() => {});
+    params.delete('discord_uid');
+    params.delete('discordId');
+    params.delete('uid');
+    const query = params.toString();
+    const next = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`;
+    window.history.replaceState(null, '', next);
+  }, [token, isAuthenticated]);
 
   // Fetch user profile whenever the token changes
   useEffect(() => {
     if (!token) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setUserLoading(true);
     apiGet<UserProfile>("/users/me", token)
       .then((u) => {
@@ -512,24 +531,19 @@ export default function App() {
         setUserLoading(false);
       })
       .catch(() => {
-        // Token expired or invalid — force re-auth
-        localStorage.removeItem("snitch_token");
-        setToken(null);
+        setLegacyToken(null);
         setUserLoading(false);
       });
   }, [token]);
 
   // Secure bot launch: exchange a short-lived launch token for a real session token.
-  // Important: this must run even if a token already exists, so launch links
-  // override stale sessions from a different user.
   useEffect(() => {
     if (!launchToken) return;
     apiPost<{ access_token: string; token_type: string }>("/auth/launch-login", {
       launch_token: launchToken,
     })
       .then(({ access_token }) => {
-        localStorage.setItem("snitch_token", access_token);
-        setToken(access_token);
+        setLegacyToken(access_token);
         setLaunchToken(null);
         clearLaunchParamsFromUrl();
       })
@@ -537,7 +551,7 @@ export default function App() {
         setLaunchToken(null);
         clearLaunchParamsFromUrl();
       });
-  }, [token, launchToken]);
+  }, [launchToken]);
 
   // Launch flow: activate session, then hydrate Home dashboard session state.
   useEffect(() => {
@@ -545,18 +559,16 @@ export default function App() {
     const sessionId = pendingAutoStartSessionId;
     apiPost<SessionRead>(`/sessions/${sessionId}/activate`, {}, token)
       .catch(() => {
-        // If already active, continue by fetching details.
         return null;
       })
       .then(async (activatedSession) => {
-        // Don't clobber a different session that is still running locally.
         const existingRaw = localStorage.getItem("snitch_session");
         if (existingRaw) {
           try {
             const existing = JSON.parse(existingRaw) as { sessionId?: number; endEpoch?: number };
             const rem = Math.max(0, Math.floor(((existing.endEpoch ?? 0) - Date.now()) / 1000));
             if (existing.sessionId !== sessionId && rem > 0) return;
-          } catch {}
+          } catch { /* empty */ }
         }
 
         const session =
@@ -586,28 +598,22 @@ export default function App() {
       });
   }, [token, pendingAutoStartSessionId]);
 
-  // Derive: if there is no token the cached user object should not be trusted
   const activeUser = token ? user : null;
 
   function signOut() {
-    localStorage.removeItem("snitch_token");
     localStorage.removeItem("snitch_card_done");
     localStorage.removeItem("snitch_onboarding_started");
-    setToken(null);
+    setLegacyToken(null);
     setUser(null);
+    logout({ logoutParams: { returnTo: window.location.origin } });
   }
 
-  function handleAuthenticated(newToken: string) {
-    localStorage.setItem("snitch_token", newToken);
-    setToken(newToken);
-  }
-
-  const navigate = (s: Screen) => setScreen(s)
+  const navigate = (s: Screen) => setScreen(s);
 
   const cameraMonitor = useCameraMonitor(token);
 
   // ── Loading splash ───────────────────────────────────────────────────────
-  if (userLoading) {
+  if (auth0Loading || tokenLoading || userLoading) {
     return (
       <div className={OUTER}>
         <div className={`${INNER} items-center justify-center`}>
@@ -618,19 +624,28 @@ export default function App() {
   }
 
   // ── Auth gate ────────────────────────────────────────────────────────────
-  if (!token || !activeUser) {
+  if (!isAuthenticated && !legacyToken) {
     return (
       <div className={AUTH_OUTER}>
         <div className={AUTH_INNER}>
-          <AuthScreen onAuthenticated={handleAuthenticated} />
+          <AuthScreen />
+        </div>
+      </div>
+    );
+  }
+
+  // Waiting for token to resolve or profile to load
+  if (!token || !activeUser) {
+    return (
+      <div className={OUTER}>
+        <div className={`${INNER} items-center justify-center`}>
+          <Spinner />
         </div>
       </div>
     );
   }
 
   // ── Stripe onboarding gate ───────────────────────────────────────────────
-  // stripe_account_enabled is set by the account.updated webhook after Stripe
-  // confirms both charges_enabled and payouts_enabled.
   if (!activeUser.stripe_account_enabled) {
     return (
       <SetupScreen

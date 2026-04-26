@@ -19,5 +19,8 @@ class Settings(BaseSettings):
 
     FRONTEND_BASE_URL: str = 'http://localhost:5173'
 
+    AUTH0_DOMAIN: str = ''
+    AUTH0_AUDIENCE: str = ''
+
 
 settings = Settings()  # type: ignore

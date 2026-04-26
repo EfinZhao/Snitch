@@ -1,5 +1,10 @@
 const API_BASE = "http://localhost:8000/api";
 
+// Auth0 config — fill these in with your Auth0 app values
+const AUTH0_DOMAIN = "dev-8jromiw25osjkoli.us.auth0.com";
+const AUTH0_CLIENT_ID = "yKoXYKd2oLIjpX6SP0zCxKuOvTG4Vpml";
+const AUTH0_AUDIENCE = "https://snitch-api";
+
 const siteInput = document.getElementById("siteInput");
 const addBtn = document.getElementById("addBtn");
 const inputError = document.getElementById("inputError");
@@ -23,8 +28,6 @@ const sessionAmountLabel = document.getElementById("sessionAmountLabel");
 
 const loginView = document.getElementById("loginView");
 const mainView = document.getElementById("mainView");
-const loginEmail = document.getElementById("loginEmail");
-const loginPassword = document.getElementById("loginPassword");
 const loginBtn = document.getElementById("loginBtn");
 const loginError = document.getElementById("loginError");
 const logoutBtn = document.getElementById("logoutBtn");
@@ -383,46 +386,56 @@ function showLoginError(msg) {
 }
 
 async function handleLogin() {
-  const email = loginEmail.value.trim();
-  const password = loginPassword.value;
-
-  if (!email || !password) {
-    showLoginError("Enter your email and password.");
-    return;
-  }
-
   loginBtn.disabled = true;
   loginBtn.textContent = "SIGNING IN…";
 
   try {
-    const body = new URLSearchParams({ username: email, password });
-    const res = await fetch(`${API_BASE}/auth/login`, {
-      method: "POST",
-      body,
+    const redirectUrl = chrome.identity.getRedirectURL();
+    const authUrl =
+      `https://${AUTH0_DOMAIN}/authorize?` +
+      new URLSearchParams({
+        response_type: "token",
+        client_id: AUTH0_CLIENT_ID,
+        redirect_uri: redirectUrl,
+        scope: "openid profile email",
+        audience: AUTH0_AUDIENCE,
+      }).toString();
+
+    const responseUrl = await new Promise((resolve, reject) => {
+      chrome.identity.launchWebAuthFlow(
+        { url: authUrl, interactive: true },
+        (callbackUrl) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else {
+            resolve(callbackUrl);
+          }
+        }
+      );
     });
 
-    if (!res.ok) {
-      const data = await res.json().catch(() => null);
-      throw new Error(data?.detail || "Login failed");
+    const hashParams = new URLSearchParams(
+      new URL(responseUrl).hash.substring(1)
+    );
+    const accessToken = hashParams.get("access_token");
+    if (!accessToken) {
+      throw new Error("No access token returned from Auth0");
     }
 
-    const { access_token } = await res.json();
-    chrome.storage.local.set({ authToken: access_token, authEmail: email }, () => {
+    chrome.storage.local.set({ authToken: accessToken }, () => {
       showView(true);
       loadAll();
     });
   } catch (err) {
-    showLoginError(err.message);
+    showLoginError(err.message || "Login failed");
   } finally {
     loginBtn.disabled = false;
-    loginBtn.textContent = "SIGN IN";
+    loginBtn.textContent = "SIGN IN WITH AUTH0";
   }
 }
 
 function handleLogout() {
-  chrome.storage.local.remove(["authToken", "authEmail"], () => {
-    loginEmail.value = "";
-    loginPassword.value = "";
+  chrome.storage.local.remove(["authToken"], () => {
     showView(false);
   });
 }
@@ -439,9 +452,6 @@ blockToggle.addEventListener("change", () => {
 });
 
 loginBtn.addEventListener("click", handleLogin);
-loginPassword.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") handleLogin();
-});
 logoutBtn.addEventListener("click", handleLogout);
 
 siteInput.addEventListener("focus", () => {

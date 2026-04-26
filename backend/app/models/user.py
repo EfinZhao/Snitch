@@ -21,9 +21,10 @@ class CreditCardNetwork(StrEnum):
 class User(SQLModel, table=True):
     # User Identity and Metadata
     id: int | None = Field(default=None, primary_key=True)
+    auth0_sub: str | None = Field(default=None, unique=True, index=True)
     discord_uid: int | None = Field(unique=True, index=True)
     email: str = Field(unique=True)
-    hashed_password: str
+    hashed_password: str = Field(default='')
     username: str = Field(unique=True, index=True)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),

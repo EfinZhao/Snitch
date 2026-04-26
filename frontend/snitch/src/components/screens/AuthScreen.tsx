@@ -1,23 +1,5 @@
-import { useState, type FormEvent } from 'react'
+import { useAuth0 } from '@auth0/auth0-react'
 import Button from '../atoms/Button'
-import StripeCardForm from '../StripeCardForm'
-import { apiPatch, apiPost, apiPostForm, ApiError } from '../../api/client'
-
-type Mode = 'signin' | 'signup'
-type Step = 'auth' | 'card' | 'redirecting'
-
-interface AuthScreenProps {
-  onAuthenticated: (token: string) => void
-}
-
-const INPUT_CLASS = [
-  'w-full border border-outline-variant rounded-lg px-4 py-3',
-  'font-body text-sm bg-surface text-on-surface',
-  'placeholder:text-on-surface-variant/60',
-  'focus:outline-none focus:border-primary transition-colors',
-].join(' ')
-
-const LABEL_CLASS = 'font-body text-xs font-semibold text-on-surface-variant uppercase tracking-wide'
 
 function parseDiscordUidFromUrl(): string | null {
   const params = new URLSearchParams(window.location.search)
@@ -27,161 +9,25 @@ function parseDiscordUidFromUrl(): string | null {
   return raw
 }
 
-export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
+export default function AuthScreen() {
+  const { loginWithRedirect } = useAuth0()
   const discordUid = parseDiscordUidFromUrl()
-  const [mode, setMode] = useState<Mode>('signin')
-  const [step, setStep] = useState<Step>('auth')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [username, setUsername] = useState('')
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
 
-  // Held after sign-up so the card step can use them
-  const [pendingToken, setPendingToken] = useState('')
-  const [pendingClientSecret, setPendingClientSecret] = useState('')
-
-  function switchMode(next: Mode) {
-    setMode(next)
-    setError('')
+  function handleLogin() {
+    loginWithRedirect({
+      appState: discordUid ? { discord_uid: discordUid } : undefined,
+    })
   }
 
-  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    setError('')
-    setLoading(true)
-
-    try {
-      if (mode === 'signup') {
-        await apiPost('/users', {
-          email,
-          password,
-          username,
-          ...(discordUid ? { discord_uid: discordUid } : {}),
-        })
-      }
-
-      const { access_token } = await apiPostForm<{ access_token: string; token_type: string }>(
-        '/auth/login',
-        { username: email, password },
-      )
-
-      localStorage.setItem('snitch_token', access_token)
-
-      if (discordUid) {
-        await apiPatch('/users/me/discord-link', { discord_uid: discordUid }, access_token)
-      }
-
-      if (mode === 'signup') {
-        // Create Stripe Customer and get client_secret for card collection
-        const { client_secret } = await apiPost<{ client_secret: string; customer_id: string }>(
-          '/payments/setup-intent',
-          {},
-          access_token,
-        )
-        setPendingToken(access_token)
-        setPendingClientSecret(client_secret)
-        setStep('card')
-      } else {
-        onAuthenticated(access_token)
-      }
-    } catch (err) {
-      if (err instanceof ApiError) {
-        if (err.status === 409) {
-          if (err.message.toLowerCase().includes('discord')) {
-            setError('This Discord account is already linked to another Snitch account.')
-          } else {
-            setError('That email or username is already taken.')
-          }
-        }
-        else if (err.status === 401) setError('Incorrect email or password.')
-        else if (err.status === 422) setError('The Discord link is invalid. Please retry from Discord.')
-        else setError(err.message)
-      } else {
-        setError('Something went wrong. Please try again.')
-      }
-    } finally {
-      setLoading(false)
-    }
+  function handleSignUp() {
+    loginWithRedirect({
+      authorizationParams: { screen_hint: 'signup' },
+      appState: discordUid ? { discord_uid: discordUid } : undefined,
+    })
   }
 
-  async function handleCardSuccess() {
-    // Mark card as done so SetupScreen skips the card step on return from Stripe
-    localStorage.setItem('snitch_card_done', '1')
-    setStep('redirecting')
-    try {
-      localStorage.setItem('snitch_onboarding_started', '1')
-      const { url } = await apiPost<{ url: string }>('/connect/onboarding-link', {}, pendingToken)
-      window.location.href = url
-    } catch {
-      localStorage.removeItem('snitch_onboarding_started')
-      setStep('card')
-      setError('Could not reach the server. Please try again.')
-    }
-  }
-
-  // ── Card step ─────────────────────────────────────────────────────────────
-  if (step === 'card') {
-    return (
-      <div className="flex flex-col flex-1 overflow-y-auto">
-        <div className="flex-1 flex flex-col items-center justify-end pb-7 px-6 gap-1">
-          <h1 className="font-display font-semibold text-5xl text-primary italic tracking-tight select-none">
-            Snitch
-          </h1>
-          <p className="font-body italic text-sm text-on-surface-variant text-center leading-snug">
-            Add a payment method to get started.
-          </p>
-        </div>
-
-        <div className="flex-shrink-0 flex flex-col px-5 gap-4 pb-8">
-          <div>
-            <h2 className="font-display font-semibold text-lg text-on-surface">Add Your Card</h2>
-            <p className="font-body text-xs text-on-surface-variant mt-1">
-              Your card is charged only if you fail a focus session.
-            </p>
-          </div>
-
-          {error && <p className="font-body text-sm text-error">{error}</p>}
-
-          <StripeCardForm clientSecret={pendingClientSecret} token={pendingToken} onSuccess={handleCardSuccess} />
-        </div>
-      </div>
-    )
-  }
-
-  // ── Redirecting to Stripe Connect onboarding ──────────────────────────────
-  if (step === 'redirecting') {
-    return (
-      <div className="flex flex-col items-center justify-center flex-1 gap-4 px-6">
-        <svg
-          className="animate-spin text-primary"
-          width="32"
-          height="32"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-        >
-          <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-        </svg>
-        <p className="font-body text-sm text-on-surface-variant italic text-center">
-          Redirecting to payment setup…
-        </p>
-      </div>
-    )
-  }
-
-  // ── Auth form ─────────────────────────────────────────────────────────────
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="flex flex-col flex-1 overflow-y-auto"
-    >
-      {/*
-        Top section — flexible, logo pinned to its bottom edge.
-        Equal flex-1 with the bottom section keeps email+password centered.
-      */}
+    <div className="flex flex-col flex-1 overflow-y-auto">
       <div className="flex-1 flex flex-col items-center justify-end pb-7 px-6 gap-1">
         <h1 className="font-display font-semibold text-5xl text-primary italic tracking-tight select-none">
           Snitch
@@ -191,102 +37,21 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
         </p>
       </div>
 
-      {/*
-        Core section — never moves regardless of mode.
-        Toggle + email + password always stay at this vertical position.
-      */}
-      <div className="flex-shrink-0 flex flex-col px-5 gap-4">
-        {/* Mode toggle */}
-        <div className="flex bg-surface-container rounded-lg p-1">
-          {(['signin', 'signup'] as Mode[]).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => switchMode(m)}
-              className={[
-                'flex-1 py-2.5 font-display font-semibold text-sm rounded-md transition-all duration-150 select-none',
-                mode === m
-                  ? 'bg-surface text-primary shadow-sm'
-                  : 'text-on-surface-variant hover:text-on-surface',
-              ].join(' ')}
-            >
-              {m === 'signin' ? 'Sign In' : 'Sign Up'}
-            </button>
-          ))}
-        </div>
-
-        {/* Email — always at this position, never shifts */}
-        <div className="flex flex-col gap-1.5">
-          <label className={LABEL_CLASS}>Email</label>
-          <input
-            className={INPUT_CLASS}
-            type="email"
-            placeholder="you@example.com"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </div>
-
-        {/* Password — always at this position, never shifts */}
-        <div className="flex flex-col gap-1.5">
-          <label className={LABEL_CLASS}>Password</label>
-          <input
-            className={INPUT_CLASS}
-            type="password"
-            placeholder={mode === 'signup' ? 'Choose a password' : 'Your password'}
-            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            minLength={mode === 'signup' ? 8 : 1}
-          />
-        </div>
-      </div>
-
-      {/*
-        Bottom section — flexible, matches top flex-1.
-        Sign-up extras (username, note) grow this section downward
-        without disturbing the core fields above.
-      */}
-      <div className="flex-1 flex flex-col px-5 pt-4 pb-8 gap-4 overflow-y-auto">
-        {/* Username appears here, below password, only in sign-up */}
-        {mode === 'signup' && (
-          <div className="flex flex-col gap-1.5">
-            <label className={LABEL_CLASS}>Username</label>
-            <input
-              className={INPUT_CLASS}
-              type="text"
-              placeholder="your_handle"
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              minLength={2}
-              maxLength={32}
-            />
-          </div>
-        )}
-
-        {error && (
-          <p className="font-body text-sm text-error leading-snug">{error}</p>
-        )}
-
-        <Button type="submit" variant="primary" fullWidth disabled={loading}>
-          {loading
-            ? 'Please wait…'
-            : mode === 'signin'
-              ? 'Sign In'
-              : 'Create Account'}
+      <div className="flex-1 flex flex-col px-5 pt-4 pb-8 gap-4">
+        <Button variant="primary" fullWidth onClick={handleLogin}>
+          Sign In
         </Button>
 
-        {mode === 'signup' && (
+        <Button variant="secondary" fullWidth onClick={handleSignUp}>
+          Create Account
+        </Button>
+
+        {discordUid && (
           <p className="font-body text-xs text-on-surface-variant text-center leading-snug">
-            After account creation you'll be asked to add a card, then set up your payout account.
+            Your Discord account will be linked automatically.
           </p>
         )}
       </div>
-    </form>
+    </div>
   )
 }

@@ -15,4 +15,5 @@ dependencies = [
     "python-multipart>=0.0.26",
     "stripe[async]>=15.1.0",
     "greenlet>=3.4.0",
+    "auth0-fastapi-api",
 ]

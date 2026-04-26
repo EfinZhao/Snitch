@@ -7,7 +7,8 @@
     "tabs",
     "storage",
     "notifications",
-    "alarms"
+    "alarms",
+    "identity"
   ],
   "host_permissions": [
     "http://localhost:8000/*"
