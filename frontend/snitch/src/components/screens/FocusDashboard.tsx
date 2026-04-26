@@ -170,6 +170,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     setAmountCents(session.amountCents)
     setRecipients(session.recipientUsernames.map(u => ({ username: u })))
     setRunning(true)
+    startCameraRef.current().catch(() => {})
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [])
 
@@ -213,6 +214,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         })
         setRunning(false)
         setStakeId(null)
+        stopCameraRef.current()
         apiPost(`/stakes/${id}/resolve`, { outcome: 'failed', elapsed_seconds: elapsed }, tokenRef.current).catch(() => {})
       } else {
         // Recompute remaining from endEpoch — source of truth
@@ -284,6 +286,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     /* eslint-enable react-hooks/set-state-in-effect */
     localStorage.removeItem(SESSION_KEY)
     localStorage.removeItem(AWAY_KEY)
+    stopCameraRef.current()
     apiPost(`/stakes/${id}/resolve`, { outcome: 'completed', elapsed_seconds: total }, token).catch(() => {})
   }, [running, seconds, stakeId, totalSeconds, token, amountCents, distractions.length])
 
@@ -416,6 +419,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
       setAmountCents(cents)
       setStakeId(stake.id)
       setRunning(true)
+      startCameraRef.current().catch(() => {})
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.status === 400) setLockError(err.message)
