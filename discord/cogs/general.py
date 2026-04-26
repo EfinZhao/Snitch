@@ -1,4 +1,7 @@
 import asyncio
+import contextlib
+from datetime import UTC, datetime, timedelta
+import json
 import os
 import re
 from typing import Any, Optional
@@ -284,6 +287,186 @@ class General(commands.Cog, name="general"):
                     detail = await response.text()
                     return False, f"Add recipient failed ({response.status}): {detail[:300]}"
                 return True, ""
+
+    async def _get_stake_via_api(
+        self,
+        token: str,
+        stake_id: int,
+    ) -> tuple[bool, str, Optional[dict[str, Any]]]:
+        headers = {"Authorization": f"Bearer {token}"}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{self.backend_api_base}/stakes/{stake_id}",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as response:
+                if response.status != 200:
+                    detail = await response.text()
+                    return False, f"Fetch stake failed ({response.status}): {detail[:300]}", None
+                payload: Any = await response.json()
+                if not isinstance(payload, dict):
+                    return False, "Could not parse stake response payload.", None
+                return True, "", payload
+
+    def _parse_backend_datetime(self, raw: Optional[str]) -> Optional[datetime]:
+        if not raw:
+            return None
+        try:
+            normalized = raw.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(normalized)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            return dt.astimezone(UTC)
+        except ValueError:
+            return None
+
+    def _stake_live_description(
+        self,
+        stake_payload: dict[str, Any],
+        seconds_left: int,
+    ) -> str:
+        creator_username = str(stake_payload.get("creator_username") or "unknown")
+        amount_cents = int(stake_payload.get("amount_cents") or 0)
+        status = str(stake_payload.get("status") or "unknown")
+        distraction_count = int(stake_payload.get("distraction_count") or 0)
+        recipients_raw = stake_payload.get("recipients")
+        recipient_names: list[str] = []
+        if isinstance(recipients_raw, list):
+            for recipient in recipients_raw:
+                if isinstance(recipient, dict):
+                    username = recipient.get("recipient_username")
+                    if username:
+                        recipient_names.append(str(username))
+        recipients_text = ", ".join(recipient_names) if recipient_names else "none"
+        return (
+            f"Stake #{stake_payload.get('id', 'unknown')} is running.\n"
+            f"Status: **{status}**\n"
+            f"Owner: **{creator_username}**\n"
+            f"Bet: **${amount_cents / 100:.2f}**\n"
+            f"Recipients: {recipients_text}\n"
+            f"Strikes: **{distraction_count}**\n"
+            f"Time left: **{format_duration(max(0, seconds_left))}**"
+        )
+
+    async def _stream_stake_events(
+        self,
+        token: str,
+        stake_id: int,
+        queue: asyncio.Queue[dict[str, Any]],
+    ) -> None:
+        headers = {"Authorization": f"Bearer {token}"}
+        timeout = aiohttp.ClientTimeout(total=None, sock_read=None)
+        while True:
+            try:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(
+                        f"{self.backend_api_base}/stakes/{stake_id}/events",
+                        headers=headers,
+                    ) as response:
+                        if response.status != 200:
+                            await asyncio.sleep(2)
+                            continue
+                        while True:
+                            raw_line = await response.content.readline()
+                            if raw_line == b"":
+                                break
+                            line = raw_line.decode("utf-8", errors="ignore").strip()
+                            if not line.startswith("data: "):
+                                continue
+                            raw_payload = line[6:]
+                            try:
+                                payload = json.loads(raw_payload)
+                            except json.JSONDecodeError:
+                                continue
+                            if isinstance(payload, dict):
+                                await queue.put(payload)
+            except asyncio.CancelledError:
+                raise
+            except aiohttp.ClientError:
+                await asyncio.sleep(2)
+            except Exception:
+                await asyncio.sleep(2)
+
+    async def _run_live_stake_message(
+        self,
+        message: discord.Message,
+        token: str,
+        stake_id: int,
+        fallback_duration_seconds: int,
+        live_view: Optional[discord.ui.View] = None,
+    ) -> None:
+        stake_payload: Optional[dict[str, Any]] = None
+        activation_time: Optional[datetime] = None
+        duration_seconds = fallback_duration_seconds
+        event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        event_task = asyncio.create_task(self._stream_stake_events(token, stake_id, event_queue))
+
+        try:
+            ok, fetch_message, payload = await self._get_stake_via_api(token=token, stake_id=stake_id)
+            if not ok or payload is None:
+                await message.edit(
+                    embed=make_snitch_embed(
+                        f"Live update paused: {fetch_message}\n"
+                        "Session may still be running in Snitch.",
+                        is_error=True,
+                    ),
+                    view=live_view,
+                )
+                return
+            stake_payload = payload
+            duration_seconds = int(stake_payload.get("duration_seconds") or duration_seconds)
+            activation_time = self._parse_backend_datetime(stake_payload.get("activated_at"))
+
+            while True:
+                while not event_queue.empty():
+                    payload = await event_queue.get()
+                    stake_payload = payload
+                    duration_seconds = int(stake_payload.get("duration_seconds") or duration_seconds)
+                    activation_time = self._parse_backend_datetime(stake_payload.get("activated_at"))
+
+                if stake_payload is None:
+                    await asyncio.sleep(1)
+                    continue
+
+                status = str(stake_payload.get("status") or "unknown")
+                if status in {"completed", "failed", "paid_out", "cancelled"}:
+                    final_embed = make_snitch_embed(
+                        self._stake_live_description(stake_payload=stake_payload, seconds_left=0)
+                    )
+                    if live_view is not None:
+                        for child in live_view.children:
+                            child.disabled = True
+                        live_view.stop()
+                    await message.edit(embed=final_embed, view=live_view)
+                    return
+
+                if status != "active" or activation_time is None:
+                    await message.edit(
+                        embed=make_snitch_embed(
+                            "Stake created. Waiting for session start from Snitch...\n"
+                            f"Owner: **{stake_payload.get('creator_username', 'unknown')}**\n"
+                            f"Bet: **${int(stake_payload.get('amount_cents') or 0) / 100:.2f}**"
+                        ),
+                        view=live_view,
+                    )
+                    await asyncio.sleep(1)
+                    continue
+
+                end_time = activation_time + timedelta(seconds=duration_seconds)
+                seconds_left = int((end_time - datetime.now(UTC)).total_seconds())
+                await message.edit(
+                    embed=make_snitch_embed(
+                        self._stake_live_description(stake_payload=stake_payload, seconds_left=seconds_left)
+                    ),
+                    view=live_view,
+                )
+                if seconds_left <= 0:
+                    return
+                await asyncio.sleep(1)
+        finally:
+            event_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await event_task
 
     async def _create_stake_launch_token_via_api(
         self,
@@ -590,6 +773,7 @@ class General(commands.Cog, name="general"):
         start_url = self._build_stake_launch_url(stake_id=stake_id, launch_token=launch_token)
         if recipient_mode_view.mode == "mention":
             mention_text = " ".join(user.mention for user in recipients)
+            start_view = StartStakeView(start_url=start_url)
             await prompt_message.edit(
                 embed=make_snitch_embed(
                     "Stake is ready.\n"
@@ -597,7 +781,14 @@ class General(commands.Cog, name="general"):
                     f"Recipients: {mention_text}\n"
                     "Use the button below to open Snitch, sign in with Discord, and auto-start the session."
                 ),
-                view=StartStakeView(start_url=start_url),
+                view=start_view,
+            )
+            await self._run_live_stake_message(
+                message=prompt_message,
+                token=token,
+                stake_id=stake_id,
+                fallback_duration_seconds=duration_seconds,
+                live_view=start_view,
             )
             return
 
@@ -617,6 +808,13 @@ class General(commands.Cog, name="general"):
                 "Use the button below to open Snitch, sign in with Discord, and auto-start the session."
             ),
             view=open_join_view,
+        )
+        await self._run_live_stake_message(
+            message=prompt_message,
+            token=token,
+            stake_id=stake_id,
+            fallback_duration_seconds=duration_seconds,
+            live_view=open_join_view,
         )
 
     

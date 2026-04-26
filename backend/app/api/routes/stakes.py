@@ -1,4 +1,8 @@
-from fastapi import APIRouter, Query
+import asyncio
+import json
+
+from fastapi import APIRouter, Query, Request
+from fastapi.responses import StreamingResponse
 
 from app.api.deps import CurrentUserDep
 from app.core.database import SessionDep
@@ -11,7 +15,7 @@ from app.schemas.stake import (
     StakeResolve,
     StakeUpdate,
 )
-from app.services import stake_service
+from app.services import stake_events, stake_service
 
 router = APIRouter()
 
@@ -48,6 +52,29 @@ async def get_stake(stake_id: int, session: SessionDep, user: CurrentUserDep):
 @router.post('/{stake_id}/activate', response_model=StakeRead)
 async def activate_stake(stake_id: int, session: SessionDep, user: CurrentUserDep):
     return await stake_service.activate_stake(session, stake_id, user)
+
+
+@router.get('/{stake_id}/events')
+async def stream_stake_events(stake_id: int, request: Request, session: SessionDep, user: CurrentUserDep):
+    initial = await stake_service.get_stake(session, stake_id, user)
+    queue = await stake_events.broker.subscribe(stake_id)
+
+    async def event_generator():
+        try:
+            yield f"data: {json.dumps(initial.model_dump(mode='json'))}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=20)
+                    yield f"data: {json.dumps(payload)}\n\n"
+                except asyncio.TimeoutError:
+                    # Keep the connection alive when no stake updates are emitted.
+                    yield ": keep-alive\n\n"
+        finally:
+            await stake_events.broker.unsubscribe(stake_id, queue)
+
+    return StreamingResponse(event_generator(), media_type='text/event-stream')
 
 
 @router.post('/{stake_id}/recipients', response_model=StakeRead)

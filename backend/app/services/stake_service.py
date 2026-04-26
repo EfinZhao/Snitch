@@ -16,7 +16,7 @@ from app.schemas.stake import (
     StakeResolve,
     StakeUpdate,
 )
-from app.services import stripe_service
+from app.services import stake_events, stripe_service
 
 
 async def _build_stake_read(session: AsyncSession, stake: Stake) -> StakeRead:
@@ -119,7 +119,9 @@ async def create_stake(session: AsyncSession, creator: User, body: StakeCreate) 
 
     await session.commit()
     await session.refresh(stake)
-    return await _build_stake_read(session, stake)
+    stake_read = await _build_stake_read(session, stake)
+    await stake_events.broker.publish(stake_read.id, stake_read.model_dump(mode='json'))
+    return stake_read
 
 
 async def add_stake_recipient(
@@ -150,7 +152,9 @@ async def add_stake_recipient(
     if target_user.id == user.id:
         raise HTTPException(status_code=400, detail='You cannot add yourself as a recipient')
     if target_user.id in existing_recipient_ids:
-        return await _build_stake_read(session, stake)
+        stake_read = await _build_stake_read(session, stake)
+        await stake_events.broker.publish(stake_read.id, stake_read.model_dump(mode='json'))
+        return stake_read
 
     session.add(
         StakeRecipient(
@@ -160,7 +164,9 @@ async def add_stake_recipient(
     )
     await session.commit()
     await session.refresh(stake)
-    return await _build_stake_read(session, stake)
+    stake_read = await _build_stake_read(session, stake)
+    await stake_events.broker.publish(stake_read.id, stake_read.model_dump(mode='json'))
+    return stake_read
 
 
 async def get_stake(session: AsyncSession, stake_id: int, user: User) -> StakeRead:
@@ -215,7 +221,9 @@ async def activate_stake(session: AsyncSession, stake_id: int, user: User) -> St
     session.add(stake)
     await session.commit()
     await session.refresh(stake)
-    return await _build_stake_read(session, stake)
+    stake_read = await _build_stake_read(session, stake)
+    await stake_events.broker.publish(stake_read.id, stake_read.model_dump(mode='json'))
+    return stake_read
 
 
 async def update_stake(session: AsyncSession, stake_id: int, user: User, body: StakeUpdate) -> StakeRead:
@@ -235,7 +243,9 @@ async def update_stake(session: AsyncSession, stake_id: int, user: User, body: S
     session.add(stake)
     await session.commit()
     await session.refresh(stake)
-    return await _build_stake_read(session, stake)
+    stake_read = await _build_stake_read(session, stake)
+    await stake_events.broker.publish(stake_read.id, stake_read.model_dump(mode='json'))
+    return stake_read
 
 
 async def resolve_stake(session: AsyncSession, stake_id: int, user: User, body: StakeResolve) -> StakeRead:
@@ -255,7 +265,9 @@ async def resolve_stake(session: AsyncSession, stake_id: int, user: User, body: 
         session.add(stake)
         await session.commit()
         await session.refresh(stake)
-        return await _build_stake_read(session, stake)
+        stake_read = await _build_stake_read(session, stake)
+        await stake_events.broker.publish(stake_read.id, stake_read.model_dump(mode='json'))
+        return stake_read
 
     # FAILED — split amount, charge the creator, transfer to each recipient.
     result = await session.exec(select(StakeRecipient).where(StakeRecipient.stake_id == stake.id))
@@ -312,7 +324,9 @@ async def resolve_stake(session: AsyncSession, stake_id: int, user: User, body: 
     session.add(stake)
     await session.commit()
     await session.refresh(stake)
-    return await _build_stake_read(session, stake)
+    stake_read = await _build_stake_read(session, stake)
+    await stake_events.broker.publish(stake_read.id, stake_read.model_dump(mode='json'))
+    return stake_read
 
 
 async def report_distraction(
@@ -329,7 +343,9 @@ async def report_distraction(
     session.add(stake)
     await session.commit()
     await session.refresh(stake)
-    return await _build_stake_read(session, stake)
+    stake_read = await _build_stake_read(session, stake)
+    await stake_events.broker.publish(stake_read.id, stake_read.model_dump(mode='json'))
+    return stake_read
 
 
 async def cancel_stake(session: AsyncSession, stake_id: int, user: User) -> StakeRead:
@@ -345,4 +361,6 @@ async def cancel_stake(session: AsyncSession, stake_id: int, user: User) -> Stak
     session.add(stake)
     await session.commit()
     await session.refresh(stake)
-    return await _build_stake_read(session, stake)
+    stake_read = await _build_stake_read(session, stake)
+    await stake_events.broker.publish(stake_read.id, stake_read.model_dump(mode='json'))
+    return stake_read
