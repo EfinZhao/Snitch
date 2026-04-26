@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+import asyncio
 
 import stripe
 from fastapi import HTTPException
@@ -8,7 +9,13 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
-from app.models.session import STRIKE_THRESHOLD, PayoutStatus, Session, SessionRecipient, SessionStatus
+from app.models.session import (
+    STRIKE_THRESHOLD,
+    PayoutStatus,
+    Session,
+    SessionRecipient,
+    SessionStatus,
+)
 from app.models.user import User
 from app.schemas.session import (
     ClassifyResponse,
@@ -24,6 +31,7 @@ from app.services import session_events, stripe_service
 
 _gemini: genai.Client | None = None
 
+
 def _get_gemini() -> genai.Client:
     global _gemini
     if _gemini is None:
@@ -31,10 +39,14 @@ def _get_gemini() -> genai.Client:
     return _gemini
 
 
-async def _build_session_read(db_session: AsyncSession, focus_session: Session) -> SessionRead:
+async def _build_session_read(
+    db_session: AsyncSession, focus_session: Session
+) -> SessionRead:
     creator = await db_session.get(User, focus_session.creator_id)
 
-    result = await db_session.exec(select(SessionRecipient).where(SessionRecipient.session_id == focus_session.id))
+    result = await db_session.exec(
+        select(SessionRecipient).where(SessionRecipient.session_id == focus_session.id)
+    )
     recipients = result.all()
 
     recipient_reads: list[SessionRecipientRead] = []
@@ -44,7 +56,7 @@ async def _build_session_read(db_session: AsyncSession, focus_session: Session) 
             SessionRecipientRead(
                 id=r.id,  # type: ignore[arg-type]
                 recipient_id=r.recipient_id,
-                recipient_username=user.username if user else 'unknown',
+                recipient_username=user.username if user else "unknown",
                 payout_cents=r.payout_cents,
                 payout_status=r.payout_status,
             )
@@ -53,7 +65,7 @@ async def _build_session_read(db_session: AsyncSession, focus_session: Session) 
     return SessionRead(
         id=focus_session.id,  # type: ignore[arg-type]
         creator_id=focus_session.creator_id,
-        creator_username=creator.username if creator else 'unknown',
+        creator_username=creator.username if creator else "unknown",
         amount_cents=focus_session.amount_cents,
         duration_seconds=focus_session.duration_seconds,
         status=focus_session.status,
@@ -67,11 +79,13 @@ async def _build_session_read(db_session: AsyncSession, focus_session: Session) 
     )
 
 
-async def create_session(db_session: AsyncSession, creator: User, body: SessionCreate) -> SessionRead:
+async def create_session(
+    db_session: AsyncSession, creator: User, body: SessionCreate
+) -> SessionRead:
     if not creator.stripe_payment_method_id:
         raise HTTPException(
             status_code=400,
-            detail='You must have a saved payment method before creating a session',
+            detail="You must have a saved payment method before creating a session",
         )
 
     recipient_by_id: dict[int, User] = {}
@@ -79,8 +93,12 @@ async def create_session(db_session: AsyncSession, creator: User, body: SessionC
     usernames = [u.strip().lower() for u in body.recipient_usernames if u.strip()]
     if usernames:
         if creator.username.lower() in usernames:
-            raise HTTPException(status_code=400, detail='You cannot add yourself as a recipient')
-        result = await db_session.exec(select(User).where(col(User.username).in_(usernames)))
+            raise HTTPException(
+                status_code=400, detail="You cannot add yourself as a recipient"
+            )
+        result = await db_session.exec(
+            select(User).where(col(User.username).in_(usernames))
+        )
         found_users = result.all()
         found_map = {u.username.lower(): u for u in found_users}
 
@@ -88,7 +106,7 @@ async def create_session(db_session: AsyncSession, creator: User, body: SessionC
         if missing:
             raise HTTPException(
                 status_code=404,
-                detail=f'Users not found: {", ".join(missing)}',
+                detail=f"Users not found: {', '.join(missing)}",
             )
         for username in usernames:
             user = found_map[username]
@@ -97,8 +115,12 @@ async def create_session(db_session: AsyncSession, creator: User, body: SessionC
     discord_uids = list(dict.fromkeys(body.recipient_discord_uids))
     if discord_uids:
         if creator.discord_uid is not None and creator.discord_uid in discord_uids:
-            raise HTTPException(status_code=400, detail='You cannot add yourself as a recipient')
-        result = await db_session.exec(select(User).where(col(User.discord_uid).in_(discord_uids)))
+            raise HTTPException(
+                status_code=400, detail="You cannot add yourself as a recipient"
+            )
+        result = await db_session.exec(
+            select(User).where(col(User.discord_uid).in_(discord_uids))
+        )
         found_users = result.all()
         found_map = {u.discord_uid: u for u in found_users if u.discord_uid is not None}
 
@@ -106,14 +128,16 @@ async def create_session(db_session: AsyncSession, creator: User, body: SessionC
         if missing:
             raise HTTPException(
                 status_code=404,
-                detail=f'Discord-linked users not found for UIDs: {", ".join(str(uid) for uid in missing)}',
+                detail=f"Discord-linked users not found for UIDs: {', '.join(str(uid) for uid in missing)}",
             )
         for discord_uid in discord_uids:
             user = found_map[discord_uid]
             recipient_by_id[user.id] = user  # type: ignore[index]
 
     if not recipient_by_id:
-        raise HTTPException(status_code=422, detail='at least one recipient is required')
+        raise HTTPException(
+            status_code=422, detail="at least one recipient is required"
+        )
 
     focus_session = Session(
         creator_id=creator.id,  # type: ignore[arg-type]
@@ -134,7 +158,9 @@ async def create_session(db_session: AsyncSession, creator: User, body: SessionC
     await db_session.commit()
     await db_session.refresh(focus_session)
     session_read = await _build_session_read(db_session, focus_session)
-    await session_events.broker.publish(session_read.id, session_read.model_dump(mode='json'))
+    await session_events.broker.publish(
+        session_read.id, session_read.model_dump(mode="json")
+    )
     return session_read
 
 
@@ -143,31 +169,45 @@ async def add_session_recipient(
 ) -> SessionRead:
     focus_session = await db_session.get(Session, session_id)
     if focus_session is None:
-        raise HTTPException(status_code=404, detail='Session not found')
+        raise HTTPException(status_code=404, detail="Session not found")
     if focus_session.creator_id != user.id:
-        raise HTTPException(status_code=403, detail='Only the creator can add recipients')
+        raise HTTPException(
+            status_code=403, detail="Only the creator can add recipients"
+        )
     if focus_session.status != SessionStatus.PENDING:
-        raise HTTPException(status_code=400, detail='Can only add recipients to a pending session')
+        raise HTTPException(
+            status_code=400, detail="Can only add recipients to a pending session"
+        )
 
-    result = await db_session.exec(select(SessionRecipient).where(SessionRecipient.session_id == focus_session.id))
+    result = await db_session.exec(
+        select(SessionRecipient).where(SessionRecipient.session_id == focus_session.id)
+    )
     existing_rows = result.all()
     existing_recipient_ids = {row.recipient_id for row in existing_rows}
 
     target_user: User | None = None
     if body.recipient_discord_uid is not None:
-        result = await db_session.exec(select(User).where(User.discord_uid == body.recipient_discord_uid))
+        result = await db_session.exec(
+            select(User).where(User.discord_uid == body.recipient_discord_uid)
+        )
         target_user = result.first()
     elif body.recipient_username:
-        result = await db_session.exec(select(User).where(User.username == body.recipient_username.lower()))
+        result = await db_session.exec(
+            select(User).where(User.username == body.recipient_username.lower())
+        )
         target_user = result.first()
 
     if target_user is None:
-        raise HTTPException(status_code=404, detail='Recipient user not found')
+        raise HTTPException(status_code=404, detail="Recipient user not found")
     if target_user.id == user.id:
-        raise HTTPException(status_code=400, detail='You cannot add yourself as a recipient')
+        raise HTTPException(
+            status_code=400, detail="You cannot add yourself as a recipient"
+        )
     if target_user.id in existing_recipient_ids:
         session_read = await _build_session_read(db_session, focus_session)
-        await session_events.broker.publish(session_read.id, session_read.model_dump(mode='json'))
+        await session_events.broker.publish(
+            session_read.id, session_read.model_dump(mode="json")
+        )
         return session_read
 
     db_session.add(
@@ -179,20 +219,28 @@ async def add_session_recipient(
     await db_session.commit()
     await db_session.refresh(focus_session)
     session_read = await _build_session_read(db_session, focus_session)
-    await session_events.broker.publish(session_read.id, session_read.model_dump(mode='json'))
+    await session_events.broker.publish(
+        session_read.id, session_read.model_dump(mode="json")
+    )
     return session_read
 
 
-async def get_session(db_session: AsyncSession, session_id: int, user: User) -> SessionRead:
+async def get_session(
+    db_session: AsyncSession, session_id: int, user: User
+) -> SessionRead:
     focus_session = await db_session.get(Session, session_id)
     if focus_session is None:
-        raise HTTPException(status_code=404, detail='Session not found')
+        raise HTTPException(status_code=404, detail="Session not found")
 
-    result = await db_session.exec(select(SessionRecipient).where(SessionRecipient.session_id == focus_session.id))
+    result = await db_session.exec(
+        select(SessionRecipient).where(SessionRecipient.session_id == focus_session.id)
+    )
     recipient_ids = [r.recipient_id for r in result.all()]
 
     if focus_session.creator_id != user.id and user.id not in recipient_ids:
-        raise HTTPException(status_code=403, detail='Not authorized to view this session')
+        raise HTTPException(
+            status_code=403, detail="Not authorized to view this session"
+        )
 
     return await _build_session_read(db_session, focus_session)
 
@@ -210,29 +258,42 @@ async def list_created_sessions(
     return [await _build_session_read(db_session, s) for s in sessions]
 
 
-async def list_received_sessions(db_session: AsyncSession, user: User) -> list[SessionRead]:
+async def list_received_sessions(
+    db_session: AsyncSession, user: User
+) -> list[SessionRead]:
     result = await db_session.exec(
-        select(SessionRecipient.session_id).where(SessionRecipient.recipient_id == user.id)
+        select(SessionRecipient.session_id).where(
+            SessionRecipient.recipient_id == user.id
+        )
     )
     session_ids = result.all()
     if not session_ids:
         return []
 
     result = await db_session.exec(
-        select(Session).where(col(Session.id).in_(session_ids)).order_by(col(Session.created_at).desc())
+        select(Session)
+        .where(col(Session.id).in_(session_ids))
+        .order_by(col(Session.created_at).desc())
     )
     sessions = result.all()
     return [await _build_session_read(db_session, s) for s in sessions]
 
 
-async def activate_session(db_session: AsyncSession, session_id: int, user: User) -> SessionRead:
+async def activate_session(
+    db_session: AsyncSession, session_id: int, user: User
+) -> SessionRead:
     focus_session = await db_session.get(Session, session_id)
     if focus_session is None:
-        raise HTTPException(status_code=404, detail='Session not found')
+        raise HTTPException(status_code=404, detail="Session not found")
     if focus_session.creator_id != user.id:
-        raise HTTPException(status_code=403, detail='Only the creator can activate a session')
+        raise HTTPException(
+            status_code=403, detail="Only the creator can activate a session"
+        )
     if focus_session.status != SessionStatus.PENDING:
-        raise HTTPException(status_code=400, detail=f'Cannot activate a session with status "{focus_session.status}"')
+        raise HTTPException(
+            status_code=400,
+            detail=f'Cannot activate a session with status "{focus_session.status}"',
+        )
 
     focus_session.status = SessionStatus.ACTIVE
     focus_session.activated_at = datetime.now(UTC)
@@ -240,7 +301,9 @@ async def activate_session(db_session: AsyncSession, session_id: int, user: User
     await db_session.commit()
     await db_session.refresh(focus_session)
     session_read = await _build_session_read(db_session, focus_session)
-    await session_events.broker.publish(session_read.id, session_read.model_dump(mode='json'))
+    await session_events.broker.publish(
+        session_read.id, session_read.model_dump(mode="json")
+    )
     return session_read
 
 
@@ -249,11 +312,13 @@ async def update_session(
 ) -> SessionRead:
     focus_session = await db_session.get(Session, session_id)
     if focus_session is None:
-        raise HTTPException(status_code=404, detail='Session not found')
+        raise HTTPException(status_code=404, detail="Session not found")
     if focus_session.creator_id != user.id:
-        raise HTTPException(status_code=403, detail='Only the creator can update a session')
+        raise HTTPException(
+            status_code=403, detail="Only the creator can update a session"
+        )
     if focus_session.status != SessionStatus.ACTIVE:
-        raise HTTPException(status_code=400, detail='Can only update an active session')
+        raise HTTPException(status_code=400, detail="Can only update an active session")
 
     if body.distraction_count is not None:
         focus_session.distraction_count = body.distraction_count
@@ -264,7 +329,9 @@ async def update_session(
     await db_session.commit()
     await db_session.refresh(focus_session)
     session_read = await _build_session_read(db_session, focus_session)
-    await session_events.broker.publish(session_read.id, session_read.model_dump(mode='json'))
+    await session_events.broker.publish(
+        session_read.id, session_read.model_dump(mode="json")
+    )
     return session_read
 
 
@@ -273,18 +340,24 @@ async def resolve_session(
 ) -> SessionRead:
     focus_session = await db_session.get(Session, session_id)
     if focus_session is None:
-        raise HTTPException(status_code=404, detail='Session not found')
+        raise HTTPException(status_code=404, detail="Session not found")
     if focus_session.creator_id != user.id:
-        raise HTTPException(status_code=403, detail='Only the creator can resolve a session')
+        raise HTTPException(
+            status_code=403, detail="Only the creator can resolve a session"
+        )
     if focus_session.status != SessionStatus.ACTIVE:
-        raise HTTPException(status_code=400, detail='Can only resolve an active session')
+        raise HTTPException(
+            status_code=400, detail="Can only resolve an active session"
+        )
 
     focus_session.resolved_at = datetime.now(UTC)
     focus_session.elapsed_seconds = body.elapsed_seconds
 
     if focus_session.distraction_count < STRIKE_THRESHOLD:
         result = await db_session.exec(
-            select(SessionRecipient).where(SessionRecipient.session_id == focus_session.id)
+            select(SessionRecipient).where(
+                SessionRecipient.session_id == focus_session.id
+            )
         )
         recipient_rows = result.all()
         for r in recipient_rows:
@@ -297,7 +370,9 @@ async def resolve_session(
         await db_session.commit()
         await db_session.refresh(focus_session)
         session_read = await _build_session_read(db_session, focus_session)
-        await session_events.broker.publish(session_read.id, session_read.model_dump(mode='json'))
+        await session_events.broker.publish(
+            session_read.id, session_read.model_dump(mode="json")
+        )
         return session_read
 
     # FAILED — split amount, charge the creator, transfer to each recipient.
@@ -305,12 +380,17 @@ async def resolve_session(
         select(SessionRecipient).where(SessionRecipient.session_id == focus_session.id)
     )
     recipient_rows = result.all()
-    per_person = focus_session.amount_cents // len(recipient_rows) if recipient_rows else 0
+    per_person = (
+        focus_session.amount_cents // len(recipient_rows) if recipient_rows else 0
+    )
     if per_person < 1:
         focus_session.status = SessionStatus.FAILED
         db_session.add(focus_session)
         await db_session.commit()
-        raise HTTPException(status_code=400, detail='Session amount too small to distribute across recipients')
+        raise HTTPException(
+            status_code=400,
+            detail="Session amount too small to distribute across recipients",
+        )
     for r in recipient_rows:
         r.payout_cents = per_person
         db_session.add(r)
@@ -328,15 +408,21 @@ async def resolve_session(
             focus_session.status = SessionStatus.FAILED
             db_session.add(focus_session)
             await db_session.commit()
-            raise HTTPException(status_code=402, detail=f'Card charge failed: {e.user_message or e.code}')
+            raise HTTPException(
+                status_code=402,
+                detail=f"Card charge failed: {e.user_message or e.code}",
+            )
 
         focus_session.stripe_payment_intent_id = intent.id
 
-        if intent.status != 'succeeded':
+        if intent.status != "succeeded":
             focus_session.status = SessionStatus.FAILED
             db_session.add(focus_session)
             await db_session.commit()
-            raise HTTPException(status_code=402, detail='Card charge did not succeed; cannot distribute payouts')
+            raise HTTPException(
+                status_code=402,
+                detail="Card charge did not succeed; cannot distribute payouts",
+            )
 
         charge_id = intent.latest_charge
         for r in recipient_rows:
@@ -363,7 +449,9 @@ async def resolve_session(
     await db_session.commit()
     await db_session.refresh(focus_session)
     session_read = await _build_session_read(db_session, focus_session)
-    await session_events.broker.publish(session_read.id, session_read.model_dump(mode='json'))
+    await session_events.broker.publish(
+        session_read.id, session_read.model_dump(mode="json")
+    )
     return session_read
 
 
@@ -371,36 +459,46 @@ async def report_distraction(
     db_session: AsyncSession, user: User, body: DistractionReport
 ) -> SessionRead:
     result = await db_session.exec(
-        select(Session).where(Session.creator_id == user.id, Session.status == SessionStatus.ACTIVE)
+        select(Session).where(
+            Session.creator_id == user.id, Session.status == SessionStatus.ACTIVE
+        )
     )
     focus_session = result.first()
     if focus_session is None:
-        raise HTTPException(status_code=404, detail='No active session found')
+        raise HTTPException(status_code=404, detail="No active session found")
 
     focus_session.distraction_count += 1
     db_session.add(focus_session)
     await db_session.commit()
     await db_session.refresh(focus_session)
     session_read = await _build_session_read(db_session, focus_session)
-    await session_events.broker.publish(session_read.id, session_read.model_dump(mode='json'))
+    await session_events.broker.publish(
+        session_read.id, session_read.model_dump(mode="json")
+    )
     return session_read
 
 
-async def cancel_session(db_session: AsyncSession, session_id: int, user: User) -> SessionRead:
+async def cancel_session(
+    db_session: AsyncSession, session_id: int, user: User
+) -> SessionRead:
     focus_session = await db_session.get(Session, session_id)
     if focus_session is None:
-        raise HTTPException(status_code=404, detail='Session not found')
+        raise HTTPException(status_code=404, detail="Session not found")
     if focus_session.creator_id != user.id:
-        raise HTTPException(status_code=403, detail='Only the creator can cancel a session')
+        raise HTTPException(
+            status_code=403, detail="Only the creator can cancel a session"
+        )
     if focus_session.status != SessionStatus.PENDING:
-        raise HTTPException(status_code=400, detail='Can only cancel a pending session')
+        raise HTTPException(status_code=400, detail="Can only cancel a pending session")
 
     focus_session.status = SessionStatus.CANCELLED
     db_session.add(focus_session)
     await db_session.commit()
     await db_session.refresh(focus_session)
     session_read = await _build_session_read(db_session, focus_session)
-    await session_events.broker.publish(session_read.id, session_read.model_dump(mode='json'))
+    await session_events.broker.publish(
+        session_read.id, session_read.model_dump(mode="json")
+    )
     return session_read
 
 
@@ -414,32 +512,37 @@ async def classify_domain(
 ) -> ClassifyResponse:
     focus_session = await db_session.get(Session, session_id)
     if focus_session is None or focus_session.creator_id != user.id:
-        raise HTTPException(status_code=404, detail='Session not found')
+        raise HTTPException(status_code=404, detail="Session not found")
     if focus_session.status != SessionStatus.ACTIVE:
-        raise HTTPException(status_code=400, detail='Session is not active')
+        raise HTTPException(status_code=400, detail="Session is not active")
 
     prompt_lines = [
-        f'Domain: {domain}',
+        f"Domain: {domain}",
         f'Page title: "{page_title}"',
     ]
     if page_text:
         prompt_lines.append(f'Page content snippet: "{page_text[:600].strip()}"')
     prompt_lines.append(
-        '\nA user is in an active focus/study session. Is visiting this page a distraction '
-        'from productive work? Social media, entertainment, gaming, and aimless news browsing '
-        'are distractions. Documentation, coding tools, academic research, and work-relevant '
-        'content are not. When unsure, do NOT block.\n\nReply YES (block) or NO (allow). One word only.'
+        "\nA user is in an active focus/study session. Is visiting this page a distraction "
+        "from productive work? Social media, entertainment, gaming, and aimless news browsing "
+        "are distractions. Documentation, coding tools, academic research, and work-relevant "
+        "content are not. When unsure, do NOT block.\n\nReply YES (block) or NO (allow). One word only."
     )
 
-    try:
-        response = await _get_gemini().aio.models.generate_content(
-            model='gemini-2.0-flash',
-            contents='\n'.join(prompt_lines),
+    def call_gemini():
+        client = _get_gemini()
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents="\n".join(prompt_lines),
             config=types.GenerateContentConfig(max_output_tokens=10),
         )
-        answer = response.text.strip().upper()
-        block = answer.startswith('YES')
-    except Exception:
-        return ClassifyResponse(block=False, reason='Classification unavailable')
+        return response.text.strip().upper()
 
-    return ClassifyResponse(block=block)
+    try:
+        # Run the sync Gemini call in a thread pool to avoid blocking
+        answer = await asyncio.to_thread(call_gemini)
+        block = answer.startswith("YES")
+        return ClassifyResponse(block=block)
+    except Exception as e:
+        print(f"[Gemini classify] Error: {e}")
+        return ClassifyResponse(block=False, reason=f"Classification error: {str(e)}")
