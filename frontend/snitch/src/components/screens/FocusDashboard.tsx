@@ -620,6 +620,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
 
   return (
     <div className="flex flex-col items-center px-8 py-10 gap-8 max-w-4xl mx-auto w-full">
+      <br></br>
 
       {/* Timer circle */}
       <div className="relative flex items-center justify-center mt-2">
@@ -709,6 +710,8 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
       </div>
 
       {/* Info cards */}
+      <br></br>
+  
       <div className="flex gap-5 w-full max-w-2xl">
 
         {/* On the line */}
