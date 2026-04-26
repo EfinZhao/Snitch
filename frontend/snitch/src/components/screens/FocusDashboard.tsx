@@ -76,6 +76,8 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
   const [totalSeconds, setTotalSeconds] = useState(DEFAULT_SECONDS)
   const [seconds, setSeconds] = useState(DEFAULT_SECONDS)
   const [running, setRunning] = useState(false)
+  const [pendingRun, setPendingRun] = useState(false)
+  const pendingEndEpochRef = useRef(0)
   const [editing, setEditing] = useState(false)
   const [inputVal, setInputVal] = useState('')
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -123,10 +125,17 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     stopCameraRef.current = cameraMonitor.stopCamera
   })
 
-  // Start camera whenever a session becomes active (manual Lock In or session recovery)
+  // Once camera is active and models are loaded (or failed), start the timer
   useEffect(() => {
-    if (running) startCameraRef.current()
-  }, [running]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (!pendingRun) return
+    const ls = cameraMonitor.loadingState
+    const perm = cameraMonitor.permission
+    if (ls !== 'ready' && ls !== 'error' && perm !== 'denied') return
+    const rem = Math.max(1, Math.floor((pendingEndEpochRef.current - Date.now()) / 1000))
+    setSeconds(rem)
+    setRunning(true)
+    setPendingRun(false)
+  }, [pendingRun, cameraMonitor.loadingState, cameraMonitor.permission])
 
   // ── Session recovery on mount ───────────────────────────────────────────
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -174,8 +183,9 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     setAmount((session.amountCents / 100).toFixed(2))
     setAmountCents(session.amountCents)
     setRecipients(session.recipientUsernames.map(u => ({ username: u })))
-    setRunning(true)
+    pendingEndEpochRef.current = session.endEpoch
     startCameraRef.current().catch(() => {})
+    setPendingRun(true)
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [])
 
@@ -410,22 +420,26 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         recipient_usernames: recipients.map(r => r.username),
       }, token)
       await apiPost<StakeRead>(`/stakes/${stake.id}/activate`, {}, token)
-
+      setAmountCents(cents)
+      setStakeId(stake.id)
+      // Request camera permission before starting the timer
+      await startCameraRef.current()
+      // endEpoch is set after camera is granted so model-loading time isn't counted
+      const endEpoch = Date.now() + totalSeconds * 1000
+      pendingEndEpochRef.current = endEpoch
       localStorage.setItem(SESSION_KEY, JSON.stringify({
         stakeId: stake.id,
-        endEpoch: Date.now() + totalSeconds * 1000,
+        endEpoch,
         durationSeconds: totalSeconds,
         amountCents: cents,
         recipientUsernames: recipients.map(r => r.username),
         distractionFractions: [],
       } satisfies PersistedSession))
       localStorage.removeItem(AWAY_KEY)
-
-      setAmountCents(cents)
-      setStakeId(stake.id)
-      setRunning(true)
-      startCameraRef.current().catch(() => {})
+      setLocking(false)
+      setPendingRun(true)
     } catch (err) {
+      setLocking(false)
       if (err instanceof ApiError) {
         if (err.status === 400) setLockError(err.message)
         else if (err.status === 404) setLockError('One or more recipients not found.')
@@ -433,8 +447,6 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
       } else {
         setLockError('Could not reach the server.')
       }
-    } finally {
-      setLocking(false)
     }
   }
 
@@ -587,6 +599,13 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         <div className="flex items-center justify-center gap-2 w-full max-w-xs py-3 font-body text-sm text-on-surface-variant">
           <span className="w-2 h-2 rounded-full bg-error animate-pulse flex-shrink-0" />
           Session in progress — stay focused
+        </div>
+      ) : pendingRun ? (
+        <div className="flex items-center justify-center gap-2 w-full max-w-xs py-3 font-body text-sm text-on-surface-variant">
+          <svg className="animate-spin flex-shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+          </svg>
+          Loading detection models… ({cameraMonitor.loadingStep}/4)
         </div>
       ) : (
         <Button

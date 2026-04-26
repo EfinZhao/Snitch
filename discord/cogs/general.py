@@ -144,12 +144,13 @@ class StartStakeView(discord.ui.View):
 
 
 class LobbyView(discord.ui.View):
-    def __init__(self, author_id: int, max_recipients: int, amount: float, duration_seconds: int) -> None:
+    def __init__(self, author_id: int, max_recipients: int, amount: float, duration_seconds: int, auth_client: "AuthClient") -> None:
         super().__init__(timeout=300)
         self.author_id = author_id
         self.max_recipients = max_recipients
         self.amount = amount
         self.duration_seconds = duration_seconds
+        self.auth_client = auth_client
         self.joined: dict[int, discord.abc.User] = {}
         self.started = False
 
@@ -177,8 +178,31 @@ class LobbyView(discord.ui.View):
         if len(self.joined) >= self.max_recipients:
             await interaction.response.send_message("Lobby is full.", ephemeral=True)
             return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        status_ok, status_msg, status = await self.auth_client.get_discord_account_status(user.id)
+        if not status_ok or status is None:
+            await interaction.followup.send(f"Could not verify your Snitch account: {status_msg}", ephemeral=True)
+            return
+        if not status.get("exists"):
+            signup_url = self.auth_client.signup_url_with_discord_uid(user.id)
+            await interaction.followup.send(
+                f"You need a Snitch account to join.\nSign up here: {signup_url}",
+                ephemeral=True,
+            )
+            return
+        if not status.get("payout_ready"):
+            await interaction.followup.send(
+                f"You need to complete Stripe Connect onboarding before joining.\n"
+                f"Set it up here: {self.auth_client.frontend_payment_setup_url}",
+                ephemeral=True,
+            )
+            return
+
         self.joined[user.id] = user
-        await interaction.response.edit_message(embed=make_snitch_embed(self._details_text()), view=self)
+        await interaction.followup.send("You've joined the lobby!", ephemeral=True)
+        await interaction.message.edit(embed=make_snitch_embed(self._details_text()), view=self)
 
     @discord.ui.button(label="Start Session", style=discord.ButtonStyle.primary)
     async def start_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -265,8 +289,25 @@ class OpenStakeSessionView(discord.ui.View):
             await interaction.response.send_message("Recipient limit reached for this stake.", ephemeral=True)
             return
 
-        if interaction.user.id <= 0:
-            await interaction.response.send_message("Could not determine your Discord UID.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        status_ok, status_msg, status = await self.cog.auth_client.get_discord_account_status(interaction.user.id)
+        if not status_ok or status is None:
+            await interaction.followup.send(f"Could not verify your Snitch account: {status_msg}", ephemeral=True)
+            return
+        if not status.get("exists"):
+            signup_url = self.cog.auth_client.signup_url_with_discord_uid(interaction.user.id)
+            await interaction.followup.send(
+                f"You need a Snitch account to join as a recipient.\nSign up here: {signup_url}",
+                ephemeral=True,
+            )
+            return
+        if not status.get("payout_ready"):
+            await interaction.followup.send(
+                f"You need to complete Stripe Connect onboarding before joining as a recipient.\n"
+                f"Set it up here: {self.cog.auth_client.frontend_payment_setup_url}",
+                ephemeral=True,
+            )
             return
 
         added, message = await self.cog._add_stake_recipient_via_api(
@@ -275,18 +316,15 @@ class OpenStakeSessionView(discord.ui.View):
             recipient_discord_uid=interaction.user.id,
         )
         if not added:
-            await interaction.response.send_message(
-                (
-                    "Could not add you as a stake recipient in Snitch. "
-                    "Make sure your Discord account is linked to a Snitch account.\n"
-                    f"Details: {message}"
-                ),
+            await interaction.followup.send(
+                f"Could not add you as a stake recipient.\nDetails: {message}",
                 ephemeral=True,
             )
             return
 
         self.joined_recipients[interaction.user.id] = interaction.user
-        await interaction.response.edit_message(embed=make_snitch_embed(self._details_text()), view=self)
+        await interaction.followup.send("You've joined the stake as a recipient!", ephemeral=True)
+        await interaction.message.edit(embed=make_snitch_embed(self._details_text()), view=self)
 
     async def on_timeout(self) -> None:
         for child in self.children:
@@ -800,6 +838,7 @@ class General(commands.Cog, name="general"):
                 max_recipients=max_recipients or 1,
                 amount=bet_amount,
                 duration_seconds=duration_seconds,
+                auth_client=self.auth_client,
             )
             await prompt_message.edit(embed=make_snitch_embed(lobby_view._details_text()), view=lobby_view)
             await lobby_view.wait()
