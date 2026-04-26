@@ -5,7 +5,10 @@ import type {
   NormalizedLandmark,
 } from '@mediapipe/tasks-vision'
 
-export type DistractionCategory = 'out_of_frame' | 'phone_detected' | 'looking_away'
+// Camera-detectable categories — used internally by the analyzer
+type CameraDistractionCategory = 'out_of_frame' | 'phone_detected' | 'looking_away'
+// Full set, including extension-reported categories
+export type DistractionCategory = CameraDistractionCategory | 'blocked_site'
 export type DistractionStatus = 'focused' | 'warning' | 'distracted'
 
 type CategoryStatus = 'idle' | 'warning' | 'distracted'
@@ -18,18 +21,18 @@ interface CategoryState {
 }
 
 export interface AnalyzerState {
-  categories: Record<DistractionCategory, CategoryState>
+  categories: Record<CameraDistractionCategory, CategoryState>
   outOfFrameCount: number
   lookingAwayWarningCount: number   // consecutive 3-second look-away windows
 }
 
 export interface AnalyzerResult {
-  newWarnings: DistractionCategory[]
-  newStrikes: DistractionCategory[]
+  newWarnings: CameraDistractionCategory[]
+  newStrikes: CameraDistractionCategory[]
   currentStatus: DistractionStatus
 }
 
-const CATEGORIES: DistractionCategory[] = ['out_of_frame', 'phone_detected', 'looking_away']
+const CATEGORIES: CameraDistractionCategory[] = ['out_of_frame', 'phone_detected', 'looking_away']
 
 // How long after a strike before the same category can warn/strike again
 const STRIKE_COOLDOWN_MS = 15_000
@@ -46,9 +49,9 @@ function defaultCategoryState(): CategoryState {
 export function createAnalyzerState(): AnalyzerState {
   return {
     categories: {
-      out_of_frame:  defaultCategoryState(),
+      out_of_frame:   defaultCategoryState(),
       phone_detected: defaultCategoryState(),
-      looking_away:  defaultCategoryState(),
+      looking_away:   defaultCategoryState(),
     },
     outOfFrameCount: 0,
     lookingAwayWarningCount: 0,
@@ -131,7 +134,7 @@ function isLookingAway(face: FaceLandmarkerResult): boolean {
 // ── State machine ────────────────────────────────────────────────────────────
 
 function advanceCategory(
-  cat: DistractionCategory,
+  cat: CameraDistractionCategory,
   detected: boolean,
   state: AnalyzerState,
   now: number,
@@ -209,7 +212,7 @@ export function analyzeFrame(
 
   const outOfFrame = isOutOfFrame(face, pose, state)
 
-  const detected: Record<DistractionCategory, boolean> = {
+  const detected: Record<CameraDistractionCategory, boolean> = {
     out_of_frame:  outOfFrame,
     phone_detected: isPhoneDetected(objects),
     looking_away:  !outOfFrame && isLookingAway(face),

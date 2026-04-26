@@ -33,6 +33,7 @@ export interface CameraMonitorState {
   endBreak: () => void
   handleWarning: (cat: DistractionCategory) => void
   handleStrike: (cat: DistractionCategory) => void
+  handleExternalStrike: (cat: DistractionCategory) => void
 }
 
 export function useCameraMonitor(token: string | null): CameraMonitorState {
@@ -58,6 +59,9 @@ export function useCameraMonitor(token: string | null): CameraMonitorState {
 
   const streamRef = useRef<MediaStream | null>(null)
   const eventIdRef = useRef(0)
+  // Tracks whether the camera is active — read by handleWarning/handleStrike
+  // to decide whether to dispatch browser events for extension notifications.
+  const activeRef = useRef(false)
 
   const [permission, setPermission] = useState<PermissionStatus>('prompt')
   const [active, setActive] = useState(false)
@@ -68,6 +72,9 @@ export function useCameraMonitor(token: string | null): CameraMonitorState {
   const breakReasonRef = useRef<BreakReason | null>(null)
   const [breakUntil, setBreakUntilState] = useState<number | null>(null)
   const [breakRemaining, setBreakRemaining] = useState(0)
+
+  // Keep activeRef in sync
+  useEffect(() => { activeRef.current = active }, [active])
 
   function _setBreakUntil(ts: number | null) {
     breakUntilRef.current = ts
@@ -110,6 +117,9 @@ export function useCameraMonitor(token: string | null): CameraMonitorState {
   const handleWarning = useCallback((cat: DistractionCategory) => {
     if (breakUntilRef.current && Date.now() < breakUntilRef.current) return
     addEvent(cat, 'warning')
+    if (activeRef.current) {
+      window.dispatchEvent(new CustomEvent('snitch-alert', { detail: { alertType: 'warning', category: cat } }))
+    }
   }, [])
 
   const handleStrike = useCallback((cat: DistractionCategory) => {
@@ -123,11 +133,27 @@ export function useCameraMonitor(token: string | null): CameraMonitorState {
     }
     setStrikes(s => s + 1)
     addEvent(cat, 'distracted')
+    if (activeRef.current) {
+      window.dispatchEvent(new CustomEvent('snitch-alert', { detail: { alertType: 'strike', category: cat } }))
+    }
     if (token) {
       apiPost('/stakes/report-distraction', { hostname: cat, url: `snitch://distraction/${cat}` }, token)
         .catch(() => {})
     }
   }, [token])
+
+  // For extension-detected distractions: updates UI state without posting to backend
+  // (the extension already posted directly).
+  const handleExternalStrike = useCallback((cat: DistractionCategory) => {
+    const onBreak = breakUntilRef.current !== null && Date.now() < breakUntilRef.current
+    if (onBreak) {
+      breakUntilRef.current = null
+      breakReasonRef.current = null
+      setBreakUntilState(null)
+    }
+    setStrikes(s => s + 1)
+    addEvent(cat, 'distracted')
+  }, [])
 
   const { loadingState, loadingStep, errorMessage, currentStatus } = useDistractionDetection({
     active,
@@ -195,5 +221,6 @@ export function useCameraMonitor(token: string | null): CameraMonitorState {
     endBreak,
     handleWarning,
     handleStrike,
+    handleExternalStrike,
   }
 }

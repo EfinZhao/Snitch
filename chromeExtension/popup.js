@@ -14,7 +14,12 @@ const siteCountBadge = document.getElementById("siteCountBadge");
 const blockToggle = document.getElementById("blockToggle");
 const blockToggleWrap = document.getElementById("blockToggleWrap");
 const toggleLabel = document.getElementById("toggleLabel");
-const sessionBanner = document.getElementById("sessionBanner");
+const sessionPanel = document.getElementById("sessionPanel");
+const sessionTimeDisplay = document.getElementById("sessionTimeDisplay");
+const arcProgress = document.getElementById("arcProgress");
+const arcTicks = document.getElementById("arcTicks");
+const sessionStrikesBadge = document.getElementById("sessionStrikesBadge");
+const sessionAmountLabel = document.getElementById("sessionAmountLabel");
 
 const loginView = document.getElementById("loginView");
 const mainView = document.getElementById("mainView");
@@ -179,35 +184,139 @@ function renderVisits(visitLog) {
   });
 }
 
-function updateSessionUI(activeSession) {
-  if (activeSession) {
-    sessionBanner.classList.remove("hidden");
+// ── Session arc timer ─────────────────────────────────────────────────────
+
+const ARC_R = 76;
+const ARC_CX = 90;
+const ARC_CY = 90;
+const ARC_CIRCUMFERENCE = 2 * Math.PI * ARC_R; // ≈ 477.52
+
+let sessionTimerInterval = null;
+
+function formatSessionTime(s) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0)
+    return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
+function arcFractionToPoint(fraction) {
+  const angle = -Math.PI / 2 + fraction * 2 * Math.PI;
+  return {
+    x: ARC_CX - ARC_R * Math.cos(angle),
+    y: ARC_CY + ARC_R * Math.sin(angle),
+  };
+}
+
+function arcTrianglePoints(cx, cy, size) {
+  size = size || 5;
+  const inward = Math.sqrt((cx - ARC_CX) ** 2 + (cy - ARC_CY) ** 2);
+  if (inward === 0) return "";
+  const nx = (ARC_CX - cx) / inward;
+  const ny = (ARC_CY - cy) / inward;
+  const px = -ny;
+  const py = nx;
+  const tip = { x: cx + nx * size * 1.2, y: cy + ny * size * 1.2 };
+  const l = { x: cx + px * size, y: cy + py * size };
+  const r = { x: cx - px * size, y: cy - py * size };
+  return `${tip.x},${tip.y} ${l.x},${l.y} ${r.x},${r.y}`;
+}
+
+function renderSessionArc(endEpoch, totalSeconds, fractions, distractionCount, amountCents) {
+  const now = Date.now();
+  const secondsRemaining = Math.max(0, Math.ceil((endEpoch - now) / 1000));
+  const elapsed = Math.max(0, totalSeconds - secondsRemaining);
+  const elapsedFraction = totalSeconds > 0 ? elapsed / totalSeconds : 0;
+  const isFailed = distractionCount >= 3;
+
+  // Countdown text
+  sessionTimeDisplay.textContent = formatSessionTime(secondsRemaining);
+  sessionTimeDisplay.style.color = isFailed ? "var(--error)" : "var(--primary)";
+
+  // Arc — dashoffset = 0 means full ring visible; increase offset to "drain" it
+  arcProgress.style.strokeDashoffset = elapsedFraction * ARC_CIRCUMFERENCE;
+  arcProgress.style.stroke = isFailed ? "var(--error)" : "var(--primary)";
+
+  // Tick marks (red triangles at each distraction's arc position)
+  arcTicks.innerHTML = "";
+  (fractions || []).forEach((fraction) => {
+    const pt = arcFractionToPoint(fraction);
+    const points = arcTrianglePoints(pt.x, pt.y);
+    if (!points) return;
+    const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+    poly.setAttribute("points", points);
+    poly.setAttribute("fill", "#ef4444");
+    arcTicks.appendChild(poly);
+  });
+
+  // Meta row
+  sessionStrikesBadge.textContent = `${distractionCount} / 3 strikes`;
+  sessionStrikesBadge.style.color = isFailed ? "var(--error)" : "var(--on-surface-variant)";
+  sessionAmountLabel.textContent = `$${(amountCents / 100).toFixed(2)} on the line`;
+
+  if (secondsRemaining === 0) {
+    clearInterval(sessionTimerInterval);
+    sessionTimerInterval = null;
+  }
+}
+
+function startSessionTimer(endEpoch, totalSeconds, fractions, distractionCount, amountCents) {
+  clearInterval(sessionTimerInterval);
+  renderSessionArc(endEpoch, totalSeconds, fractions, distractionCount, amountCents);
+  sessionTimerInterval = setInterval(() => {
+    renderSessionArc(endEpoch, totalSeconds, fractions, distractionCount, amountCents);
+  }, 1000);
+}
+
+function updateSessionUI(activeSession, data) {
+  if (activeSession && data && data.sessionEndEpoch) {
+    sessionPanel.classList.remove("hidden");
     blockToggleWrap.classList.add("locked");
     blockToggle.checked = false;
     toggleLabel.textContent = "Locked";
+    startSessionTimer(
+      data.sessionEndEpoch,
+      data.sessionTotalSeconds || 1500,
+      data.sessionDistractionFractions || [],
+      data.sessionDistractionCount || 0,
+      data.sessionAmountCents || 0
+    );
   } else {
-    sessionBanner.classList.add("hidden");
-    blockToggleWrap.classList.remove("locked");
+    sessionPanel.classList.add("hidden");
+    clearInterval(sessionTimerInterval);
+    sessionTimerInterval = null;
+    if (!activeSession) {
+      blockToggleWrap.classList.remove("locked");
+    }
   }
 }
 
 function loadAll() {
-  chrome.storage.local.get(["blocklist", "visitLog", "blockingEnabled", "activeSession"], (result) => {
-    const blocklist = result.blocklist || [];
-    const visitLog = result.visitLog || [];
+  chrome.storage.local.get(
+    [
+      "blocklist", "visitLog", "blockingEnabled", "activeSession",
+      "sessionEndEpoch", "sessionTotalSeconds", "sessionDistractionCount",
+      "sessionDistractionFractions", "sessionAmountCents",
+    ],
+    (result) => {
+      const blocklist = result.blocklist || [];
+      const visitLog = result.visitLog || [];
 
-    updateStats(blocklist, visitLog);
-    renderSites(blocklist);
-    renderVisits(visitLog);
+      updateStats(blocklist, visitLog);
+      renderSites(blocklist);
+      renderVisits(visitLog);
 
-    const isSession = !!result.activeSession;
-    updateSessionUI(isSession);
+      const isSession = !!result.activeSession;
+      updateSessionUI(isSession, result);
 
-    if (!isSession) {
-      blockToggle.checked = !!result.blockingEnabled;
-      toggleLabel.textContent = result.blockingEnabled ? "Blocking" : "Block";
+      if (!isSession) {
+        blockToggle.checked = !!result.blockingEnabled;
+        toggleLabel.textContent = result.blockingEnabled ? "Blocking" : "Block";
+      }
     }
-  });
+  );
 }
 
 function addSite() {
