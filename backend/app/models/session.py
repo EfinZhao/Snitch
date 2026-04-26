@@ -17,6 +17,7 @@ class SessionStatus(StrEnum):
 
 class PayoutStatus(StrEnum):
     PENDING = 'pending'
+    CANCELED = 'canceled'
     PAID = 'paid'
     FAILED = 'failed'
 

@@ -144,9 +144,7 @@ class StartSessionView(discord.ui.View):
                 'Only the person running this session can start it.', ephemeral=True
             )
             return
-        button.disabled = True
-        await interaction.response.edit_message(view=self)
-        await interaction.followup.send(self.start_url, ephemeral=True)
+        await interaction.response.send_message(self.start_url, ephemeral=True)
 
 
 class LobbyView(discord.ui.View):
@@ -307,9 +305,7 @@ class OpenSessionSessionView(discord.ui.View):
                 'Only the person running this session can start it.', ephemeral=True
             )
             return
-        button.disabled = True
-        await interaction.response.edit_message(view=self)
-        await interaction.followup.send(self.start_url, ephemeral=True)
+        await interaction.response.send_message(self.start_url, ephemeral=True)
 
     @discord.ui.button(label="I'm a Doubter", style=discord.ButtonStyle.success)
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
