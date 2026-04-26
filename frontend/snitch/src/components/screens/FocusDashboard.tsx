@@ -14,6 +14,7 @@ const AWAY_LIMIT_MS = 30_000;
 const SESSION_KEY = "snitch_session";
 const AWAY_KEY = "snitch_away_at";
 interface SessionSyncData {
+  sessionId: number
   endEpoch: number
   totalSeconds: number
   distractionCount: number
@@ -344,6 +345,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
       const raw = localStorage.getItem(SESSION_KEY);
       const session: PersistedSession | null = raw ? JSON.parse(raw) : null;
       notifyExtension(true, {
+        sessionId,
         endEpoch: session?.endEpoch ?? Date.now() + seconds * 1000,
         totalSeconds,
         distractionCount: distractions.length,
@@ -708,6 +710,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
 
       {/* Sessions section */}
       <div className="flex flex-col items-center gap-3 w-full">
+
         <div className="flex items-center gap-1 border-b border-outline-variant pb-1">
           <span className="font-display text-base text-on-surface-variant">
             $

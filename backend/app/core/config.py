@@ -19,5 +19,7 @@ class Settings(BaseSettings):
 
     FRONTEND_BASE_URL: str = 'http://localhost:5173'
 
+    GEMINI_API_KEY: str = ''
+
 
 settings = Settings()  # type: ignore

@@ -259,6 +259,7 @@ function renderSessionArc(endEpoch, totalSeconds, fractions, distractionCount, a
   if (secondsRemaining === 0) {
     clearInterval(sessionTimerInterval);
     sessionTimerInterval = null;
+    updateSessionUI(false, null);
   }
 }
 
@@ -293,30 +294,46 @@ function updateSessionUI(activeSession, data) {
   }
 }
 
+function loadAllData(result) {
+  const blocklist = result.blocklist || [];
+  const visitLog = result.visitLog || [];
+
+  updateStats(blocklist, visitLog);
+  renderSites(blocklist);
+  renderVisits(visitLog);
+
+  const isSession = !!result.activeSession;
+  updateSessionUI(isSession, result);
+
+  if (!isSession) {
+    blockToggle.checked = !!result.blockingEnabled;
+    toggleLabel.textContent = result.blockingEnabled ? "Blocking" : "Block";
+  }
+}
+
 function loadAll() {
-  chrome.storage.local.get(
-    [
-      "blocklist", "visitLog", "blockingEnabled", "activeSession",
-      "sessionEndEpoch", "sessionTotalSeconds", "sessionDistractionCount",
-      "sessionDistractionFractions", "sessionAmountCents",
-    ],
-    (result) => {
-      const blocklist = result.blocklist || [];
-      const visitLog = result.visitLog || [];
-
-      updateStats(blocklist, visitLog);
-      renderSites(blocklist);
-      renderVisits(visitLog);
-
-      const isSession = !!result.activeSession;
-      updateSessionUI(isSession, result);
-
-      if (!isSession) {
-        blockToggle.checked = !!result.blockingEnabled;
-        toggleLabel.textContent = result.blockingEnabled ? "Blocking" : "Block";
-      }
-    }
-  );
+  // Ask background to check for active sessions right now (don't rely on stale storage)
+  chrome.runtime.sendMessage({ type: "CHECK_SESSION" }, (response) => {
+    // Then load all data from storage
+    chrome.storage.local.get(
+      [
+        "blocklist", "visitLog", "blockingEnabled", "activeSession",
+        "sessionEndEpoch", "sessionTotalSeconds", "sessionDistractionCount",
+        "sessionDistractionFractions", "sessionAmountCents",
+      ],
+      loadAllData
+    );
+  }).catch(() => {
+    // Fallback if message fails
+    chrome.storage.local.get(
+      [
+        "blocklist", "visitLog", "blockingEnabled", "activeSession",
+        "sessionEndEpoch", "sessionTotalSeconds", "sessionDistractionCount",
+        "sessionDistractionFractions", "sessionAmountCents",
+      ],
+      loadAllData
+    );
+  });
 }
 
 function addSite() {
@@ -456,4 +473,31 @@ chrome.storage.local.get(["authToken"], (result) => {
   const loggedIn = !!result.authToken;
   showView(loggedIn);
   if (loggedIn) loadAll();
+});
+
+// React to session state changes while the popup is open
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local") return;
+
+  if ("activeSession" in changes) {
+    const isActive = !!changes.activeSession.newValue;
+    if (!isActive) {
+      updateSessionUI(false, null);
+      chrome.storage.local.get(["blockingEnabled"], (r) => {
+        blockToggle.checked = !!r.blockingEnabled;
+        toggleLabel.textContent = r.blockingEnabled ? "Blocking" : "Block";
+      });
+    }
+  }
+
+  // Refresh arc when strike data updates mid-session
+  const sessionDataKeys = ["sessionDistractionFractions", "sessionDistractionCount", "sessionAmountCents"];
+  if (sessionDataKeys.some((k) => k in changes)) {
+    chrome.storage.local.get(
+      ["activeSession", "sessionEndEpoch", "sessionTotalSeconds", "sessionDistractionCount", "sessionDistractionFractions", "sessionAmountCents"],
+      (result) => {
+        if (result.activeSession) updateSessionUI(true, result);
+      }
+    );
+  }
 });

@@ -25,6 +25,9 @@ const ALERT_CATEGORY_LABELS = {
 // In-memory rate-limit timestamp for warning notifications
 let lastWarningNotificationAt = 0;
 
+// URL → bool classify cache, cleared between sessions
+const classifyCache = new Map();
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get(["blocklist", "visitLog"], (result) => {
     if (!result.blocklist) {
@@ -83,6 +86,55 @@ function notifyFrontendTabs(message) {
   });
 }
 
+// Ask the backend whether a URL is a distraction during an active session.
+// Always attempts page-content extraction; falls back gracefully.
+// Cache key is the full URL so per-video/per-article results aren't conflated.
+async function classifyUrl(tabId, url, domain, pageTitle, sessionId, token) {
+  if (classifyCache.has(url)) {
+    console.log(`[Snitch classify] cache hit — ${domain} → ${classifyCache.get(url) ? "BLOCK" : "allow"}`);
+    return classifyCache.get(url);
+  }
+
+  let pageText = null;
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => (document.body.innerText || "").slice(0, 600).trim(),
+    });
+    pageText = results?.[0]?.result || null;
+  } catch {
+    // scripting unavailable (e.g. chrome:// pages) — continue without it
+  }
+
+  const body = { domain, page_title: pageTitle || "" };
+  if (pageText) body.page_text = pageText;
+
+  console.log(`[Snitch classify] → POST /sessions/${sessionId}/classify  domain=${domain}  title="${pageTitle}"  pageText=${pageText ? pageText.length + " chars" : "none"}`);
+
+  try {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/classify`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      console.warn(`[Snitch classify] ✗ HTTP ${res.status} for ${domain}`);
+      return false;
+    }
+    const data = await res.json();
+    const block = !!data.block;
+    classifyCache.set(url, block);
+    console.log(`[Snitch classify] ← ${block ? "BLOCK" : "allow"}  ${domain}`);
+    return block;
+  } catch (err) {
+    console.error(`[Snitch classify] fetch failed for ${domain}:`, err);
+    return false;
+  }
+}
+
 async function checkActiveSession() {
   return new Promise((resolve) => {
     chrome.storage.local.get(["authToken"], async (result) => {
@@ -122,11 +174,20 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  // ── Check active session on demand (from popup) ─────────────────────────
+  if (message.type === "CHECK_SESSION") {
+    checkActiveSession().then((hasActive) => {
+      sendResponse({ hasActive });
+    });
+    return true; // keep channel open for async response
+  }
+
   // ── Session state sync from web app ───────────────────────────────────
   if (message.type === "SESSION_UPDATE") {
     if (message.active) {
       chrome.storage.local.set({
         activeSession: true,
+        sessionId: message.sessionId,
         sessionEndEpoch: message.endEpoch,
         sessionTotalSeconds: message.totalSeconds,
         sessionDistractionCount: message.distractionCount ?? 0,
@@ -134,6 +195,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sessionAmountCents: message.amountCents ?? 0,
       });
     } else {
+      classifyCache.clear();
       chrome.storage.local.set({ activeSession: false });
     }
     sendResponse({ ok: true });
@@ -184,14 +246,13 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!hostname) return;
 
   chrome.storage.local.get(
-    ["blocklist", "visitLog", "blockingEnabled", "authToken", "activeSession"],
+    ["blocklist", "visitLog", "blockingEnabled", "authToken", "activeSession", "sessionId"],
     (result) => {
       const blocklist = result.blocklist || [];
-      if (!isFlaggedSite(hostname, blocklist)) return;
+      const isFlagged = isFlaggedSite(hostname, blocklist);
 
-      reportDistraction(hostname, tab.url, result.authToken);
-
-      if (shouldBlock(result)) {
+      // ── Hard block (no active session, blocking enabled) ──────────────
+      if (isFlagged && shouldBlock(result)) {
         const blockedUrl = chrome.runtime.getURL(
           `blocked.html?site=${encodeURIComponent(hostname)}`
         );
@@ -201,30 +262,59 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
         return;
       }
 
-      // During an active session: relay the blocked-site visit to the frontend
-      // so it can add an arc mark and increment the strike counter visually.
-      if (result.activeSession) {
-        notifyFrontendTabs({ type: "EXTENSION_DISTRACTION", hostname, url: tab.url });
+      // ── Manual blocklist notification ─────────────────────────────────
+      if (isFlagged) {
+        reportDistraction(hostname, tab.url, result.authToken);
+
+        if (result.activeSession) {
+          notifyFrontendTabs({ type: "EXTENSION_DISTRACTION", hostname, url: tab.url });
+        }
+
+        chrome.action.setBadgeText({ text: "!", tabId });
+        chrome.action.setBadgeBackgroundColor({ color: "#335f87", tabId });
+        chrome.action.setBadgeTextColor({ color: "#FFFFFF", tabId });
+
+        chrome.notifications.create(`snitch-${Date.now()}`, {
+          type: "basic",
+          iconUrl: "icons/icon128.png",
+          title: "Snitch — Flagged Site",
+          message: `You're visiting ${hostname}. This site is on your flagged list.`,
+          priority: 2,
+        });
+
+        const visitLog = result.visitLog || [];
+        visitLog.unshift({ url: tab.url, hostname, timestamp: Date.now() });
+        if (visitLog.length > 200) visitLog.length = 200;
+        chrome.storage.local.set({ visitLog });
       }
 
-      chrome.action.setBadgeText({ text: "!", tabId });
-      chrome.action.setBadgeBackgroundColor({ color: "#335f87", tabId });
-      chrome.action.setBadgeTextColor({ color: "#FFFFFF", tabId });
+      // ── AI classification during active session ────────────────────────
+      if (result.activeSession && result.authToken && result.sessionId) {
+        (async () => {
+          const shouldAiBlock = await classifyUrl(
+            tabId, tab.url, hostname, tab.title || "",
+            result.sessionId, result.authToken
+          );
+          if (!shouldAiBlock) return;
 
-      chrome.notifications.create(`snitch-${Date.now()}`, {
-        type: "basic",
-        iconUrl: "icons/icon128.png",
-        title: "Snitch — Flagged Site",
-        message: `You're visiting ${hostname}. This site is on your flagged list.`,
-        priority: 2,
-      });
+          const blockedUrl = chrome.runtime.getURL(
+            `blocked.html?site=${encodeURIComponent(hostname)}&ai=1`
+          );
+          chrome.tabs.update(tabId, { url: blockedUrl }).catch(() => {});
 
-      const visitLog = result.visitLog || [];
-      visitLog.unshift({ url: tab.url, hostname, timestamp: Date.now() });
-
-      if (visitLog.length > 200) visitLog.length = 200;
-
-      chrome.storage.local.set({ visitLog });
+          // For sites not already on the manual blocklist, report + log the distraction
+          if (!isFlagged) {
+            reportDistraction(hostname, tab.url, result.authToken);
+            notifyFrontendTabs({ type: "EXTENSION_DISTRACTION", hostname, url: tab.url });
+            chrome.storage.local.get(["visitLog"], (r) => {
+              const log = r.visitLog || [];
+              log.unshift({ url: tab.url, hostname, timestamp: Date.now(), aiBlocked: true });
+              if (log.length > 200) log.length = 200;
+              chrome.storage.local.set({ visitLog: log });
+            });
+          }
+        })();
+      }
     }
   );
 });

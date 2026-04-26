@@ -44,6 +44,7 @@ class Session(SQLModel, table=True):
     elapsed_seconds: int | None = Field(default=None)
     distraction_count: int = Field(default=0)
     stripe_payment_intent_id: str | None = Field(default=None, unique=True)
+    goal_text: str | None = Field(default=None)
 
 
 class SessionRecipient(SQLModel, table=True):

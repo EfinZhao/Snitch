@@ -8,6 +8,8 @@ from app.api.deps import CurrentUserDep
 from app.core.database import SessionDep
 from app.models.session import SessionStatus
 from app.schemas.session import (
+    ClassifyRequest,
+    ClassifyResponse,
     DistractionReport,
     SessionCreate,
     SessionRead,
@@ -90,6 +92,11 @@ async def update_session(session_id: int, body: SessionUpdate, session: SessionD
 @router.post('/{session_id}/resolve', response_model=SessionRead)
 async def resolve_session(session_id: int, body: SessionResolve, session: SessionDep, user: CurrentUserDep):
     return await session_service.resolve_session(session, session_id, user, body)
+
+
+@router.post('/{session_id}/classify', response_model=ClassifyResponse)
+async def classify_domain(session_id: int, body: ClassifyRequest, session: SessionDep, user: CurrentUserDep):
+    return await session_service.classify_domain(session, session_id, user, body.domain, body.page_title, body.page_text)
 
 
 @router.delete('/{session_id}', response_model=SessionRead)

@@ -25,6 +25,7 @@ export interface SessionRead {
   resolved_at: string | null
   elapsed_seconds: number | null
   distraction_count: number
+  goal_text: string | null
   recipients: Array<{
     id: number
     recipient_id: number

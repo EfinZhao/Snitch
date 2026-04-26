@@ -21,6 +21,7 @@ class SessionCreate(BaseModel):
     duration_seconds: int
     recipient_usernames: list[str] = []
     recipient_discord_uids: list[int] = []
+    goal_text: str | None = None
 
     @field_validator('amount_cents')
     @classmethod
@@ -93,6 +94,17 @@ class SessionRecipientRead(BaseModel):
     model_config = {'from_attributes': True}
 
 
+class ClassifyRequest(BaseModel):
+    domain: str
+    page_title: str
+    page_text: str | None = None
+
+
+class ClassifyResponse(BaseModel):
+    block: bool
+    reason: str = ""
+
+
 class SessionRead(BaseModel):
     id: int
     creator_id: int
@@ -105,6 +117,7 @@ class SessionRead(BaseModel):
     resolved_at: datetime | None
     elapsed_seconds: int | None
     distraction_count: int
+    goal_text: str | None
     recipients: list[SessionRecipientRead]
 
     model_config = {'from_attributes': True}

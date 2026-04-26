@@ -2,12 +2,16 @@ from datetime import UTC, datetime
 
 import stripe
 from fastapi import HTTPException
+from google import genai
+from google.genai import types
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.core.config import settings
 from app.models.session import STRIKE_THRESHOLD, PayoutStatus, Session, SessionRecipient, SessionStatus
 from app.models.user import User
 from app.schemas.session import (
+    ClassifyResponse,
     DistractionReport,
     SessionCreate,
     SessionRecipientAdd,
@@ -17,6 +21,14 @@ from app.schemas.session import (
     SessionUpdate,
 )
 from app.services import session_events, stripe_service
+
+_gemini: genai.Client | None = None
+
+def _get_gemini() -> genai.Client:
+    global _gemini
+    if _gemini is None:
+        _gemini = genai.Client(api_key=settings.GEMINI_API_KEY)
+    return _gemini
 
 
 async def _build_session_read(db_session: AsyncSession, focus_session: Session) -> SessionRead:
@@ -50,6 +62,7 @@ async def _build_session_read(db_session: AsyncSession, focus_session: Session) 
         resolved_at=focus_session.resolved_at,
         elapsed_seconds=focus_session.elapsed_seconds,
         distraction_count=focus_session.distraction_count,
+        goal_text=focus_session.goal_text,
         recipients=recipient_reads,
     )
 
@@ -106,6 +119,7 @@ async def create_session(db_session: AsyncSession, creator: User, body: SessionC
         creator_id=creator.id,  # type: ignore[arg-type]
         amount_cents=body.amount_cents,
         duration_seconds=body.duration_seconds,
+        goal_text=body.goal_text.strip() if body.goal_text else None,
     )
     db_session.add(focus_session)
     await db_session.flush()
@@ -379,3 +393,44 @@ async def cancel_session(db_session: AsyncSession, session_id: int, user: User) 
     session_read = await _build_session_read(db_session, focus_session)
     await session_events.broker.publish(session_read.id, session_read.model_dump(mode='json'))
     return session_read
+
+
+async def classify_domain(
+    db_session: AsyncSession,
+    session_id: int,
+    user: User,
+    domain: str,
+    page_title: str,
+    page_text: str | None,
+) -> ClassifyResponse:
+    focus_session = await db_session.get(Session, session_id)
+    if focus_session is None or focus_session.creator_id != user.id:
+        raise HTTPException(status_code=404, detail='Session not found')
+    if focus_session.status != SessionStatus.ACTIVE:
+        raise HTTPException(status_code=400, detail='Session is not active')
+
+    prompt_lines = [
+        f'Domain: {domain}',
+        f'Page title: "{page_title}"',
+    ]
+    if page_text:
+        prompt_lines.append(f'Page content snippet: "{page_text[:600].strip()}"')
+    prompt_lines.append(
+        '\nA user is in an active focus/study session. Is visiting this page a distraction '
+        'from productive work? Social media, entertainment, gaming, and aimless news browsing '
+        'are distractions. Documentation, coding tools, academic research, and work-relevant '
+        'content are not. When unsure, do NOT block.\n\nReply YES (block) or NO (allow). One word only.'
+    )
+
+    try:
+        response = await _get_gemini().aio.models.generate_content(
+            model='gemini-2.0-flash',
+            contents='\n'.join(prompt_lines),
+            config=types.GenerateContentConfig(max_output_tokens=10),
+        )
+        answer = response.text.strip().upper()
+        block = answer.startswith('YES')
+    except Exception:
+        return ClassifyResponse(block=False, reason='Classification unavailable')
+
+    return ClassifyResponse(block=block)
