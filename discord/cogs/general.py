@@ -137,6 +137,67 @@ class StartStakeView(discord.ui.View):
         )
 
 
+class LobbyView(discord.ui.View):
+    def __init__(self, author_id: int, max_recipients: int, amount: float, duration_seconds: int) -> None:
+        super().__init__(timeout=300)
+        self.author_id = author_id
+        self.max_recipients = max_recipients
+        self.amount = amount
+        self.duration_seconds = duration_seconds
+        self.joined: dict[int, discord.abc.User] = {}
+        self.started = False
+
+    def _details_text(self) -> str:
+        recipient_mentions = (
+            ", ".join(u.mention for u in self.joined.values()) if self.joined else "none yet"
+        )
+        return (
+            f"**Lobby open** — waiting for recipients to join.\n"
+            f"Bet: **${self.amount:.2f}** | Duration: **{format_duration(self.duration_seconds)}**\n"
+            f"Slots filled: **{len(self.joined)}/{self.max_recipients}**\n"
+            f"Joined: {recipient_mentions}\n\n"
+            "Once at least one person has joined, the creator can press **Start Session**."
+        )
+
+    @discord.ui.button(label="Join", style=discord.ButtonStyle.success)
+    async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        user = interaction.user
+        if user.bot or user.id == self.author_id:
+            await interaction.response.send_message("You cannot join this stake.", ephemeral=True)
+            return
+        if user.id in self.joined:
+            await interaction.response.send_message("You already joined this lobby.", ephemeral=True)
+            return
+        if len(self.joined) >= self.max_recipients:
+            await interaction.response.send_message("Lobby is full.", ephemeral=True)
+            return
+        self.joined[user.id] = user
+        await interaction.response.edit_message(embed=make_snitch_embed(self._details_text()), view=self)
+
+    @discord.ui.button(label="Start Session", style=discord.ButtonStyle.primary)
+    async def start_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "Only the stake creator can start the session.", ephemeral=True
+            )
+            return
+        if not self.joined:
+            await interaction.response.send_message(
+                "At least one person must join before you can start.", ephemeral=True
+            )
+            return
+        self.started = True
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(view=self)
+        self.stop()
+
+    async def on_timeout(self) -> None:
+        for child in self.children:
+            child.disabled = True
+        self.stop()
+
+
 class OpenStakeSessionView(discord.ui.View):
     def __init__(
         self,
@@ -147,6 +208,7 @@ class OpenStakeSessionView(discord.ui.View):
         max_recipients: int,
         duration_seconds: int,
         start_url: str,
+        initial_recipients: Optional[dict[int, discord.abc.User]] = None,
     ) -> None:
         super().__init__(timeout=float(duration_seconds))
         self.cog = cog
@@ -154,7 +216,7 @@ class OpenStakeSessionView(discord.ui.View):
         self.stake_id = stake_id
         self.token = token
         self.max_recipients = max_recipients
-        self.joined_recipients: dict[int, discord.abc.User] = {}
+        self.joined_recipients: dict[int, discord.abc.User] = dict(initial_recipients or {})
         self.add_item(
             discord.ui.Button(
                 label="Open Snitch & Start Session",
@@ -720,6 +782,26 @@ class General(commands.Cog, name="general"):
             )
             return
 
+        # In open-join mode, show a lobby and wait for at least one joiner before creating the stake.
+        if recipient_mode_view.mode == "anyone":
+            lobby_view = LobbyView(
+                author_id=context.author.id,
+                max_recipients=max_recipients or 1,
+                amount=bet_amount,
+                duration_seconds=duration_seconds,
+            )
+            await prompt_message.edit(embed=make_snitch_embed(lobby_view._details_text()), view=lobby_view)
+            await lobby_view.wait()
+
+            if not lobby_view.started:
+                await prompt_message.edit(
+                    embed=make_snitch_embed("Lobby timed out with no one ready. Command canceled.", is_error=True),
+                    view=None,
+                )
+                return
+
+            recipients = list(lobby_view.joined.values())
+
         recipient_discord_uids = sorted({user.id for user in recipients if user.id > 0})
 
         amount_cents = int(round(bet_amount * 100))
@@ -800,6 +882,7 @@ class General(commands.Cog, name="general"):
             max_recipients=max_recipients or 1,
             duration_seconds=duration_seconds,
             start_url=start_url,
+            initial_recipients={u.id: u for u in recipients},
         )
         await prompt_message.edit(
             embed=make_snitch_embed(
