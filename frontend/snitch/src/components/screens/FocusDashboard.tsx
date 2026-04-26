@@ -6,6 +6,7 @@ import type { Screen, UserProfile, StakeRead } from '../../types'
 
 const DEFAULT_SECONDS = 25 * 60
 const CX = 124, CY = 124, R = 112
+const MAX_STRIKES = 3
 const SYNC_INTERVAL_MS = 30_000
 const AWAY_LIMIT_MS = 30_000
 const SESSION_KEY = 'snitch_session'
@@ -176,12 +177,6 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
 
   // ── Visibility / beforeunload tracking ─────────────────────────────────
   useEffect(() => {
-    function handleHidden() {
-      if (stakeIdRef.current !== null) {
-        localStorage.setItem(AWAY_KEY, String(Date.now()))
-      }
-    }
-
     function handleVisible() {
       const awayAtStr = localStorage.getItem(AWAY_KEY)
       if (!awayAtStr || stakeIdRef.current === null) {
@@ -230,8 +225,8 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     }
 
     function handleVisibilityChange() {
-      if (document.visibilityState === 'hidden') handleHidden()
-      else handleVisible()
+      // Camera keeps running in background tabs — only penalize actual tab closes (beforeunload)
+      if (document.visibilityState === 'visible') handleVisible()
     }
 
     function handleBeforeUnload() {
@@ -510,7 +505,12 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
             <button
               onClick={startEditing}
               disabled={running}
-              className="font-display font-semibold text-4xl text-primary tabular-nums disabled:cursor-default"
+              className={[
+                'font-display font-semibold text-4xl tabular-nums disabled:cursor-default transition-colors duration-300',
+                running && currentStatus === 'distracted' ? 'text-error' :
+                running && currentStatus === 'warning'   ? 'text-yellow-500' :
+                'text-primary',
+              ].join(' ')}
             >
               {formatTime(seconds)}
             </button>
@@ -688,6 +688,28 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
                 value={`$${(summary.amountCents / 100).toFixed(2)}`}
                 valueClass={summary.outcome === 'completed' ? 'text-primary' : 'text-error'}
               />
+              {summary.outcome === 'failed' && recipients.length > 0 && (
+                <>
+                  <div className="border-t border-outline-variant" />
+                  <div className="flex items-start justify-around gap-2 flex-wrap">
+                    {recipients.map(({ username }, i) => {
+                      const base = Math.floor(summary.amountCents / recipients.length)
+                      const share = i === recipients.length - 1
+                        ? summary.amountCents - base * (recipients.length - 1)
+                        : base
+                      return (
+                        <div key={username} className="flex flex-col items-center gap-1">
+                          <div className="w-10 h-10 rounded-full border-2 border-error bg-error-container flex items-center justify-center text-xs font-display font-semibold text-on-error-container">
+                            {username.slice(0, 2).toUpperCase()}
+                          </div>
+                          <span className="font-body text-xs text-on-surface-variant">@{username}</span>
+                          <span className="font-display font-semibold text-sm text-error">${(share / 100).toFixed(2)}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
             </div>
 
             <Button variant="primary" fullWidth onClick={dismissSummary}>

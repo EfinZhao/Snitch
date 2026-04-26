@@ -5,7 +5,7 @@ import Chip from '../atoms/Chip'
 import type { CameraMonitorState, BreakReason } from '../../hooks/useCameraMonitor'
 import type { Screen } from '../../types'
 
-const MAX_STRIKES = 5
+const MAX_STRIKES = 3
 
 const CATEGORY_LABELS = {
   out_of_frame: 'Out of frame',
@@ -36,12 +36,19 @@ export default function DistractionMonitor({
     permission, active, strikes, events, currentStatus,
     loadingState, loadingStep, errorMessage,
     breakUntil, breakRemaining,
-    streamRef, startCamera, stopCamera, startBreak, endBreak,
+    streamRef, setDisplayCanvas, startCamera, stopCamera, startBreak, endBreak,
     handleWarning, handleStrike,
   } = cameraMonitor
 
   // Display-only video — just renders the shared stream
   const videoRef = useRef<HTMLVideoElement>(null)
+  // Canvas overlay — detection draws bounding boxes here while on this screen
+  const displayCanvasRef = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    setDisplayCanvas(displayCanvasRef.current)
+    return () => setDisplayCanvas(null)
+  }, [setDisplayCanvas])
 
   const syncAndAttach = useCallback(() => {
     const video = videoRef.current
@@ -122,6 +129,10 @@ export default function DistractionMonitor({
           className="w-full h-full object-cover scale-x-[-1]"
           muted
           playsInline
+        />
+        <canvas
+          ref={displayCanvasRef}
+          className="absolute inset-0 w-full h-full pointer-events-none scale-x-[-1]"
         />
 
         {/* Idle / denied overlay */}
