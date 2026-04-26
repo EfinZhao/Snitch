@@ -16,10 +16,17 @@ def verify_password(plain: str, hashed: str) -> bool:
     return password_hasher.verify(plain, hashed)
 
 
-def create_access_token(subject: str | int, expires_delta: timedelta | None = None) -> str:
+def create_access_token(
+    subject: str | int,
+    expires_delta: timedelta | None = None,
+    extra_claims: dict | None = None,
+) -> str:
     expire = datetime.now(UTC) + (expires_delta or timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES))
+    payload = {'sub': str(subject), 'exp': expire}
+    if extra_claims:
+        payload.update(extra_claims)
     return jwt.encode(
-        {'sub': str(subject), 'exp': expire},
+        payload,
         settings.JWT_SECRET_KEY,
         algorithm=settings.JWT_ALGORITHM,
     )

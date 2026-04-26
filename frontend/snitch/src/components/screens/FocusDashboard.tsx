@@ -10,6 +10,9 @@ const SYNC_INTERVAL_MS = 30_000
 const AWAY_LIMIT_MS = 30_000
 const SESSION_KEY = 'snitch_session'
 const AWAY_KEY = 'snitch_away_at'
+function notifyExtension(active: boolean) {
+  window.dispatchEvent(new CustomEvent('snitch-session', { detail: { active } }))
+}
 
 function formatTime(s: number) {
   const h = Math.floor(s / 3600)
@@ -142,6 +145,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         /* eslint-disable react-hooks/set-state-in-effect */
         setSummary({ outcome: 'failed', reason: 'You left the session for more than 30 seconds.', amountCents: session.amountCents, strikes: session.distractionFractions.length, totalSeconds: session.durationSeconds, elapsedSeconds: elapsed })
         /* eslint-enable react-hooks/set-state-in-effect */
+        notifyExtension(false)
         apiPost(`/stakes/${session.stakeId}/resolve`, { outcome: 'failed', elapsed_seconds: elapsed }, token).catch(() => {})
         return
       }
@@ -153,6 +157,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
       /* eslint-disable react-hooks/set-state-in-effect */
       setSummary({ outcome: 'completed', reason: 'Timer finished while you were away.', amountCents: session.amountCents, strikes: session.distractionFractions.length, totalSeconds: session.durationSeconds, elapsedSeconds: session.durationSeconds })
       /* eslint-enable react-hooks/set-state-in-effect */
+      notifyExtension(false)
       apiPost(`/stakes/${session.stakeId}/resolve`, { outcome: 'completed', elapsed_seconds: session.durationSeconds }, token).catch(() => {})
       return
     }
@@ -165,7 +170,6 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     setAmountCents(session.amountCents)
     setRecipients(session.recipientUsernames.map(u => ({ username: u })))
     setRunning(true)
-    startCameraRef.current().catch(() => {})
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [])
 
@@ -209,7 +213,6 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         })
         setRunning(false)
         setStakeId(null)
-        stopCameraRef.current()
         apiPost(`/stakes/${id}/resolve`, { outcome: 'failed', elapsed_seconds: elapsed }, tokenRef.current).catch(() => {})
       } else {
         // Recompute remaining from endEpoch — source of truth
@@ -281,7 +284,6 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     /* eslint-enable react-hooks/set-state-in-effect */
     localStorage.removeItem(SESSION_KEY)
     localStorage.removeItem(AWAY_KEY)
-    stopCameraRef.current()
     apiPost(`/stakes/${id}/resolve`, { outcome: 'completed', elapsed_seconds: total }, token).catch(() => {})
   }, [running, seconds, stakeId, totalSeconds, token, amountCents, distractions.length])
 
@@ -414,7 +416,6 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
       setAmountCents(cents)
       setStakeId(stake.id)
       setRunning(true)
-      startCameraRef.current().catch(() => {})
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.status === 400) setLockError(err.message)

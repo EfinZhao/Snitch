@@ -76,10 +76,10 @@ export default function DistractionMonitor({
     'focused' | 'warning' | 'distracted' | 'break',
     { label: string; variant: 'success' | 'warning' | 'default'; pulse: boolean }
   > = {
-    focused:    { label: 'Focused',       variant: 'success', pulse: false },
-    warning:    { label: '⚠ Heads up…',   variant: 'warning', pulse: true  },
-    distracted: { label: '✗ Distracted',  variant: 'warning', pulse: false },
-    break:      { label: 'On break',      variant: 'default', pulse: false },
+    focused:    { label: 'Focused',      variant: 'success', pulse: false },
+    warning:    { label: '⚠ Heads up…',  variant: 'warning', pulse: true  },
+    distracted: { label: '✗ Distracted', variant: 'warning', pulse: false },
+    break:      { label: 'On break',     variant: 'default', pulse: false },
   }
   const displayKey = isOnBreak ? 'break' : currentStatus
   const { label: statusLabel, variant: statusVariant, pulse } = statusConfig[displayKey]
