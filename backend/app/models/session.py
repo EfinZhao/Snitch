@@ -6,7 +6,7 @@ from sqlmodel import Column, DateTime, Field, SQLModel
 STRIKE_THRESHOLD = 3
 
 
-class StakeStatus(StrEnum):
+class SessionStatus(StrEnum):
     PENDING = 'pending'
     ACTIVE = 'active'
     COMPLETED = 'completed'
@@ -21,12 +21,12 @@ class PayoutStatus(StrEnum):
     FAILED = 'failed'
 
 
-class Stake(SQLModel, table=True):
+class Session(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     creator_id: int = Field(foreign_key='user.id', index=True)
     amount_cents: int
     duration_seconds: int
-    status: StakeStatus = Field(default=StakeStatus.PENDING)
+    status: SessionStatus = Field(default=SessionStatus.PENDING)
 
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
@@ -46,9 +46,9 @@ class Stake(SQLModel, table=True):
     stripe_payment_intent_id: str | None = Field(default=None, unique=True)
 
 
-class StakeRecipient(SQLModel, table=True):
+class SessionRecipient(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
-    stake_id: int = Field(foreign_key='stake.id', index=True)
+    session_id: int = Field(foreign_key='session.id', index=True)
     recipient_id: int = Field(foreign_key='user.id', index=True)
     payout_cents: int | None = None
     payout_status: PayoutStatus = Field(default=PayoutStatus.PENDING)

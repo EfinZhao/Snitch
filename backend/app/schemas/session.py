@@ -3,10 +3,10 @@ from enum import StrEnum
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from app.models.stake import PayoutStatus, StakeStatus
+from app.models.session import PayoutStatus, SessionStatus
 
 
-class StakeOutcome(StrEnum):
+class SessionOutcome(StrEnum):
     COMPLETED = 'completed'
     FAILED = 'failed'
 
@@ -16,7 +16,7 @@ class DistractionReport(BaseModel):
     url: str
 
 
-class StakeCreate(BaseModel):
+class SessionCreate(BaseModel):
     amount_cents: int
     duration_seconds: int
     recipient_usernames: list[str] = []
@@ -53,18 +53,18 @@ class StakeCreate(BaseModel):
         return v
 
     @model_validator(mode='after')
-    def at_least_one_recipient(self) -> 'StakeCreate':
+    def at_least_one_recipient(self) -> 'SessionCreate':
         if not self.recipient_usernames and not self.recipient_discord_uids:
             raise ValueError('at least one recipient is required')
         return self
 
 
-class StakeRecipientAdd(BaseModel):
+class SessionRecipientAdd(BaseModel):
     recipient_username: str | None = None
     recipient_discord_uid: int | None = None
 
     @model_validator(mode='after')
-    def exactly_one_identifier(self) -> 'StakeRecipientAdd':
+    def exactly_one_identifier(self) -> 'SessionRecipientAdd':
         has_username = bool((self.recipient_username or '').strip())
         has_discord_uid = self.recipient_discord_uid is not None
         if has_username == has_discord_uid:
@@ -74,16 +74,16 @@ class StakeRecipientAdd(BaseModel):
         return self
 
 
-class StakeUpdate(BaseModel):
+class SessionUpdate(BaseModel):
     distraction_count: int | None = None
     elapsed_seconds: int | None = None
 
 
-class StakeResolve(BaseModel):
+class SessionResolve(BaseModel):
     elapsed_seconds: int
 
 
-class StakeRecipientRead(BaseModel):
+class SessionRecipientRead(BaseModel):
     id: int
     recipient_id: int
     recipient_username: str
@@ -93,18 +93,18 @@ class StakeRecipientRead(BaseModel):
     model_config = {'from_attributes': True}
 
 
-class StakeRead(BaseModel):
+class SessionRead(BaseModel):
     id: int
     creator_id: int
     creator_username: str
     amount_cents: int
     duration_seconds: int
-    status: StakeStatus
+    status: SessionStatus
     created_at: datetime
     activated_at: datetime | None
     resolved_at: datetime | None
     elapsed_seconds: int | None
     distraction_count: int
-    recipients: list[StakeRecipientRead]
+    recipients: list[SessionRecipientRead]
 
     model_config = {'from_attributes': True}

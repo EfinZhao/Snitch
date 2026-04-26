@@ -13,13 +13,13 @@ class TokenPayload(BaseModel):
     exp: int
 
 
-class StakeLaunchTokenCreate(BaseModel):
-    stake_id: int
+class SessionLaunchTokenCreate(BaseModel):
+    session_id: int
 
 
-class StakeLaunchTokenRead(BaseModel):
+class SessionLaunchTokenRead(BaseModel):
     launch_token: str
 
 
-class StakeLaunchLoginRequest(BaseModel):
+class SessionLaunchLoginRequest(BaseModel):
     launch_token: str

@@ -3,7 +3,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
-from app.models.stake import Stake
+from app.models.session import Session
 from app.models.user import CreditCardNetwork, User
 
 
@@ -82,16 +82,16 @@ async def handle_setup_intent_succeeded(session: AsyncSession, setup_intent) -> 
     )
 
 
-async def charge_for_stake(stake: Stake, customer_id: str, payment_method_id: str) -> stripe.PaymentIntent:
+async def charge_for_session(session: Session, customer_id: str, payment_method_id: str) -> stripe.PaymentIntent:
     return await stripe.PaymentIntent.create_async(
-        amount=stake.amount_cents,
+        amount=session.amount_cents,
         currency='usd',
         customer=customer_id,
         payment_method=payment_method_id,
         off_session=True,
         confirm=True,
-        transfer_group=f'stake_{stake.id}',
-        metadata={'stake_id': str(stake.id)},
+        transfer_group=f'session_{session.id}',
+        metadata={'session_id': str(session.id)},
     )
 
 
@@ -99,15 +99,15 @@ async def create_transfer(
     amount_cents: int,
     destination_account_id: str,
     charge_id: str,
-    stake_id: int,
+    session_id: int,
 ) -> stripe.Transfer:
     return await stripe.Transfer.create_async(
         amount=amount_cents,
         currency='usd',
         destination=destination_account_id,
         source_transaction=charge_id,
-        transfer_group=f'stake_{stake_id}',
-        metadata={'stake_id': str(stake_id)},
+        transfer_group=f'session_{session_id}',
+        metadata={'session_id': str(session_id)},
     )
 
 

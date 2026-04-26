@@ -3,7 +3,7 @@ import Card from '../atoms/Card'
 import Chip from '../atoms/Chip'
 import Button from '../atoms/Button'
 import { apiGet } from '../../api/client'
-import type { Screen, UserProfile, StakeRead } from '../../types'
+import type { Screen, UserProfile, SessionRead } from '../../types'
 
 interface Props {
   navigate: (screen: Screen) => void
@@ -27,9 +27,9 @@ function formatDate(iso: string): string {
 }
 
 // Count consecutive days (ending today) where at least one completed session occurred
-function computeStreak(stakes: StakeRead[]): number {
+function computeStreak(sessions: SessionRead[]): number {
   const completedDays = new Set(
-    stakes
+    sessions
       .filter(s => s.status === 'completed' && s.resolved_at)
       .map(s => new Date(s.resolved_at!).toDateString()),
   )
@@ -43,32 +43,32 @@ function computeStreak(stakes: StakeRead[]): number {
 }
 
 export default function FocusStats({ navigate, token }: Props) {
-  const [myStakes, setMyStakes] = useState<StakeRead[]>([])
+  const [mySessions, setMySessions] = useState<SessionRead[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
     Promise.all([
-      apiGet<StakeRead[]>('/stakes', token),
+      apiGet<SessionRead[]>('/sessions', token),
     ])
       .then(([my]) => {
-        setMyStakes(my)
+        setMySessions(my)
       })
       .catch(() => setError('Could not load your stats.'))
       .finally(() => setLoading(false))
   }, [token])
 
   // ── Derived stats ─────────────────────────────────────────────────────
-  const saved = myStakes
+  const saved = mySessions
     .filter(s => s.status === 'completed')
     .reduce((acc, s) => acc + s.amount_cents, 0)
 
-  const lost = myStakes
+  const lost = mySessions
     .filter(s => s.status === 'paid_out')
     .reduce((acc, s) => acc + s.amount_cents, 0)
 
-  const streak = computeStreak(myStakes)
-  const recentSessions = myStakes.slice(0, 10)
+  const streak = computeStreak(mySessions)
+  const recentSessions = mySessions.slice(0, 10)
 
   // Weekly bar chart (last 7 days)
   const weekBars = Array.from({ length: 7 }, (_, i) => {
@@ -76,7 +76,7 @@ export default function FocusStats({ navigate, token }: Props) {
     d.setDate(d.getDate() - (6 - i))
     const dayStr = d.toDateString()
     const dayLabel = d.toLocaleDateString('en-US', { weekday: 'short' })
-    const sessionsToday = myStakes.filter(
+    const sessionsToday = mySessions.filter(
       s => s.activated_at && new Date(s.activated_at).toDateString() === dayStr,
     )
     const hours = sessionsToday.reduce((acc, s) => acc + (s.elapsed_seconds ?? s.duration_seconds) / 3600, 0)

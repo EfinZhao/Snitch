@@ -137,7 +137,7 @@ export function useCameraMonitor(token: string | null): CameraMonitorState {
       window.dispatchEvent(new CustomEvent('snitch-alert', { detail: { alertType: 'strike', category: cat } }))
     }
     if (token) {
-      apiPost('/stakes/report-distraction', { hostname: cat, url: `snitch://distraction/${cat}` }, token)
+      apiPost('/sessions/report-distraction', { hostname: cat, url: `snitch://distraction/${cat}` }, token)
         .catch(() => {})
     }
   }, [token])
