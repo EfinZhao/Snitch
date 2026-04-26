@@ -60,9 +60,32 @@ def format_duration(seconds: int) -> str:
     return ' '.join(parts)
 
 
-def make_snitch_embed(description: str, is_error: bool = False, title: str = 'Session') -> discord.Embed:
-    color = 0xE02B2B if is_error else 0x2F80ED
-    return discord.Embed(title=title, description=description, color=color)
+def make_snitch_embed(
+    description: str,
+    is_error: bool = False,
+    title: str = 'Session',
+    style: str = 'default',
+) -> discord.Embed:
+    # Keep compatibility with older call sites that only pass is_error.
+    if is_error:
+        style = 'error'
+
+    style_map: dict[str, tuple[int, str]] = {
+        'default': (0x2F80ED, '✨'),
+        'success': (0x2FBF71, '✅'),
+        'warning': (0xF2A93B, '⚠️'),
+        'error': (0xE02B2B, '⛔'),
+    }
+    color, icon = style_map.get(style, style_map['default'])
+
+    embed = discord.Embed(
+        title=f'{icon} {title}',
+        description=description.strip(),
+        color=color,
+        timestamp=datetime.now(UTC),
+    )
+    embed.set_footer(text='Snitch • Stay focused.')
+    return embed
 
 
 class RecipientModeView(discord.ui.View):
@@ -665,6 +688,7 @@ class General(commands.Cog, name='general'):
 
                 status = str(session_payload.get("status") or "unknown")
                 if status in {"completed", "failed", "paid_out", "cancelled"}:
+                    final_style = 'success' if status == 'completed' else 'warning'
                     if live_view is not None:
                         for child in live_view.children:
                             child.disabled = True
@@ -675,6 +699,7 @@ class General(commands.Cog, name='general'):
                                 session_payload, taunts=self._session_taunts.get(session_id, [])
                             ),
                             title=session_title,
+                            style=final_style,
                         ),
                         view=live_view,
                     )
