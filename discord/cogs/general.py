@@ -126,15 +126,21 @@ class AuthActionView(discord.ui.View):
 
 
 class StartStakeView(discord.ui.View):
-    def __init__(self, start_url: str) -> None:
+    def __init__(self, start_url: str, author_id: int) -> None:
         super().__init__(timeout=3600)
-        self.add_item(
-            discord.ui.Button(
-                label="Open Snitch & Start Session",
-                style=discord.ButtonStyle.link,
-                url=start_url,
+        self.start_url = start_url
+        self.author_id = author_id
+
+    @discord.ui.button(label="Open Snitch & Start Session", style=discord.ButtonStyle.primary)
+    async def open_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "Only the stake creator can start the session.", ephemeral=True
             )
-        )
+            return
+        button.disabled = True
+        await interaction.response.edit_message(view=self)
+        await interaction.followup.send(self.start_url, ephemeral=True)
 
 
 class LobbyView(discord.ui.View):
@@ -216,14 +222,8 @@ class OpenStakeSessionView(discord.ui.View):
         self.stake_id = stake_id
         self.token = token
         self.max_recipients = max_recipients
+        self.start_url = start_url
         self.joined_recipients: dict[int, discord.abc.User] = dict(initial_recipients or {})
-        self.add_item(
-            discord.ui.Button(
-                label="Open Snitch & Start Session",
-                style=discord.ButtonStyle.link,
-                url=start_url,
-            )
-        )
 
     def _details_text(self) -> str:
         recipient_mentions = (
@@ -236,6 +236,17 @@ class OpenStakeSessionView(discord.ui.View):
             f"Open slots: **{len(self.joined_recipients)}/{self.max_recipients}**\n"
             f"Recipients: {recipient_mentions}"
         )
+
+    @discord.ui.button(label="Open Snitch & Start Session", style=discord.ButtonStyle.primary)
+    async def open_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "Only the stake creator can start the session.", ephemeral=True
+            )
+            return
+        button.disabled = True
+        await interaction.response.edit_message(view=self)
+        await interaction.followup.send(self.start_url, ephemeral=True)
 
     @discord.ui.button(label="Join As Recipient", style=discord.ButtonStyle.success)
     async def join_button(
@@ -855,7 +866,7 @@ class General(commands.Cog, name="general"):
         start_url = self._build_stake_launch_url(stake_id=stake_id, launch_token=launch_token)
         if recipient_mode_view.mode == "mention":
             mention_text = " ".join(user.mention for user in recipients)
-            start_view = StartStakeView(start_url=start_url)
+            start_view = StartStakeView(start_url=start_url, author_id=context.author.id)
             await prompt_message.edit(
                 embed=make_snitch_embed(
                     "Stake is ready.\n"
