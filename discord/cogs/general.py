@@ -60,9 +60,9 @@ def format_duration(seconds: int) -> str:
     return ' '.join(parts)
 
 
-def make_snitch_embed(description: str, is_error: bool = False, title: str = 'Stake') -> discord.Embed:
+def make_snitch_embed(description: str, is_error: bool = False, title: str = 'Session') -> discord.Embed:
     color = 0xE02B2B if is_error else 0x2F80ED
-    return discord.Embed(title="Session", description=description, color=color)
+    return discord.Embed(title=title, description=description, color=color)
 
 
 class RecipientModeView(discord.ui.View):
@@ -73,7 +73,7 @@ class RecipientModeView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
-            await interaction.response.send_message('Only the person who ran `/stake` can choose this.', ephemeral=True)
+            await interaction.response.send_message('Only the person who ran `/session` can choose this.', ephemeral=True)
             return False
         return True
 
@@ -418,23 +418,23 @@ class General(commands.Cog, name='general'):
             return None
 
     @staticmethod
-    def _extract_recipient_names(stake_payload: dict[str, Any]) -> list[str]:
+    def _extract_recipient_names(session_payload: dict[str, Any]) -> list[str]:
         names: list[str] = []
-        for r in stake_payload.get('recipients') or []:
+        for r in session_payload.get('recipients') or []:
             if isinstance(r, dict):
                 u = r.get('recipient_username')
                 if u:
                     names.append(str(u))
         return names
 
-    def _stake_live_description(
+    def _session_live_description(
         self,
         session_payload: dict[str, Any],
         seconds_left: int,
     ) -> str:
-        amount_cents = int(stake_payload.get('amount_cents') or 0)
-        distraction_count = int(stake_payload.get('distraction_count') or 0)
-        doubters_text = ', '.join(self._extract_recipient_names(stake_payload)) or 'none'
+        amount_cents = int(session_payload.get('amount_cents') or 0)
+        distraction_count = int(session_payload.get('distraction_count') or 0)
+        doubters_text = ', '.join(self._extract_recipient_names(session_payload)) or 'none'
         return (
             f'Bet: **${amount_cents / 100:.2f}**\n'
             f'Doubters: {doubters_text}\n'
@@ -442,12 +442,12 @@ class General(commands.Cog, name='general'):
             f'Time left: **{format_duration(max(0, seconds_left))}**'
         )
 
-    def _stake_final_summary(self, stake_payload: dict[str, Any]) -> str:
-        status = str(stake_payload.get('status') or 'unknown')
-        amount_cents = int(stake_payload.get('amount_cents') or 0)
-        distraction_count = int(stake_payload.get('distraction_count') or 0)
-        elapsed = int(stake_payload.get('elapsed_seconds') or 0)
-        doubters_text = ', '.join(self._extract_recipient_names(stake_payload)) or 'none'
+    def _session_final_summary(self, session_payload: dict[str, Any]) -> str:
+        status = str(session_payload.get('status') or 'unknown')
+        amount_cents = int(session_payload.get('amount_cents') or 0)
+        distraction_count = int(session_payload.get('distraction_count') or 0)
+        elapsed = int(session_payload.get('elapsed_seconds') or 0)
+        doubters_text = ', '.join(self._extract_recipient_names(session_payload)) or 'none'
         outcome = '✅ Completed' if status == 'completed' else '❌ Failed'
         return (
             f'{outcome}\n'
@@ -540,16 +540,13 @@ class General(commands.Cog, name='general'):
 
                 status = str(session_payload.get("status") or "unknown")
                 if status in {"completed", "failed", "paid_out", "cancelled"}:
-                    final_embed = make_snitch_embed(
-                        self._session_live_description(session_payload=session_payload, seconds_left=0)
-                    )
                     if live_view is not None:
                         for child in live_view.children:
                             child.disabled = True
                         live_view.stop()
                     await message.edit(
                         embed=make_snitch_embed(
-                            self._stake_final_summary(stake_payload),
+                            self._session_final_summary(session_payload),
                             title=session_title,
                         ),
                         view=live_view,
@@ -589,7 +586,9 @@ class General(commands.Cog, name='general'):
 
                 await message.edit(
                     embed=make_snitch_embed(
-                        self._stake_live_description(stake_payload=stake_payload, seconds_left=seconds_left),
+                        self._session_live_description(
+                            session_payload=session_payload, seconds_left=seconds_left
+                        ),
                         title=session_title,
                     ),
                     view=live_view,
@@ -670,7 +669,7 @@ class General(commands.Cog, name='general'):
         except asyncio.TimeoutError:
             await prompt_message.edit(
                 embed=make_snitch_embed(
-                    "Took too long. Run `/stake` again when you're ready.",
+                    "Took too long. Run `/session` again when you're ready.",
                     is_error=True,
                 ),
                 view=None,
@@ -716,7 +715,7 @@ class General(commands.Cog, name='general'):
         if recipient_mode_view.mode is None:
             await prompt_message.edit(
                 embed=make_snitch_embed(
-                    "You didn't choose in time. Run `/stake` again when you're ready.", is_error=True
+                    "You didn't choose in time. Run `/session` again when you're ready.", is_error=True
                 ),
                 view=None,
             )
@@ -738,7 +737,7 @@ class General(commands.Cog, name='general'):
             except asyncio.TimeoutError:
                 await prompt_message.edit(
                     embed=make_snitch_embed(
-                        "Took too long. Run `/stake` again when you've got your doubters ready.",
+                        "Took too long. Run `/session` again when you've got your doubters ready.",
                         is_error=True,
                     ),
                     view=None,
@@ -783,7 +782,7 @@ class General(commands.Cog, name='general'):
 
             if max_recipients is None:
                 await prompt_message.edit(
-                    embed=make_snitch_embed("Too many tries. Run `/stake` again when you're ready.", is_error=True),
+                    embed=make_snitch_embed("Too many tries. Run `/session` again when you're ready.", is_error=True),
                     view=None,
                 )
                 return
@@ -811,7 +810,7 @@ class General(commands.Cog, name='general'):
 
         if bet_amount is None:
             await prompt_message.edit(
-                embed=make_snitch_embed("Too many tries. Run `/stake` again when you're ready.", is_error=True),
+                embed=make_snitch_embed("Too many tries. Run `/session` again when you're ready.", is_error=True),
                 view=None,
             )
             return
@@ -839,7 +838,7 @@ class General(commands.Cog, name='general'):
 
         if duration_seconds is None:
             await prompt_message.edit(
-                embed=make_snitch_embed("Too many tries. Run `/stake` again when you're ready.", is_error=True),
+                embed=make_snitch_embed("Too many tries. Run `/session` again when you're ready.", is_error=True),
                 view=None,
             )
             return
@@ -864,7 +863,7 @@ class General(commands.Cog, name='general'):
             if not lobby_view.started:
                 await prompt_message.edit(
                     embed=make_snitch_embed(
-                        'Nobody showed up. Run `/stake` again when your doubters are ready.', is_error=True
+                        'Nobody showed up. Run `/session` again when your doubters are ready.', is_error=True
                     ),
                     view=None,
                 )
