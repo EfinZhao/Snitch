@@ -549,6 +549,16 @@ export default function App() {
         return null;
       })
       .then(async (activatedStake) => {
+        // Don't clobber a different session that is still running locally.
+        const existingRaw = localStorage.getItem("snitch_session");
+        if (existingRaw) {
+          try {
+            const existing = JSON.parse(existingRaw) as { stakeId?: number; endEpoch?: number };
+            const rem = Math.max(0, Math.floor(((existing.endEpoch ?? 0) - Date.now()) / 1000));
+            if (existing.stakeId !== stakeId && rem > 0) return;
+          } catch {}
+        }
+
         const stake =
           activatedStake ??
           (await apiGet<StakeRead>(`/stakes/${stakeId}`, token));
