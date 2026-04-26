@@ -60,7 +60,7 @@ def format_duration(seconds: int) -> str:
     return ' '.join(parts)
 
 
-def make_snitch_embed(description: str, is_error: bool = False, title: str = 'Stake') -> discord.Embed:
+def make_snitch_embed(description: str, is_error: bool = False, title: str = 'Session') -> discord.Embed:
     color = 0xE02B2B if is_error else 0x2F80ED
     return discord.Embed(title=title, description=description, color=color)
 
@@ -73,7 +73,7 @@ class RecipientModeView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
-            await interaction.response.send_message('Only the person who ran `/stake` can choose this.', ephemeral=True)
+            await interaction.response.send_message('Only the person who ran `/session` can choose this.', ephemeral=True)
             return False
         return True
 
@@ -131,7 +131,7 @@ class TauntModal(discord.ui.Modal, title="You're almost in!"):
         await self._callback(interaction, (self.taunt_input.value or '').strip())
 
 
-class StartStakeView(discord.ui.View):
+class StartSessionView(discord.ui.View):
     def __init__(self, start_url: str, author_id: int) -> None:
         super().__init__(timeout=3600)
         self.start_url = start_url
@@ -266,12 +266,12 @@ class LobbyView(discord.ui.View):
         self.stop()
 
 
-class OpenStakeSessionView(discord.ui.View):
+class OpenSessionSessionView(discord.ui.View):
     def __init__(
         self,
         cog: 'General',
         author_id: int,
-        stake_id: int,
+        session_id: int,
         token: str,
         max_recipients: int,
         duration_seconds: int,
@@ -282,7 +282,7 @@ class OpenStakeSessionView(discord.ui.View):
         super().__init__(timeout=float(duration_seconds))
         self.cog = cog
         self.author_id = author_id
-        self.stake_id = stake_id
+        self.session_id = session_id
         self.token = token
         self.max_recipients = max_recipients
         self.start_url = start_url
@@ -366,9 +366,9 @@ class OpenStakeSessionView(discord.ui.View):
                 ephemeral=True,
             )
             return
-        added, add_message = await self.cog._add_stake_recipient_via_api(
+        added, add_message = await self.cog._add_session_recipient_via_api(
             token=self.token,
-            stake_id=self.stake_id,
+            session_id=self.session_id,
             recipient_discord_uid=user.id,
         )
         if not added:
@@ -379,7 +379,7 @@ class OpenStakeSessionView(discord.ui.View):
             return
         self.joined_recipients[user.id] = user
         if taunt:
-            self.cog._stake_taunts.setdefault(self.stake_id, []).append((user.display_name, taunt))
+            self.cog._session_taunts.setdefault(self.session_id, []).append((user.display_name, taunt))
         await interaction.followup.send("You're in as a doubter — good luck to them 😈", ephemeral=True)
         if original_message is not None:
             with contextlib.suppress(discord.HTTPException):
@@ -401,10 +401,10 @@ class General(commands.Cog, name='general'):
         self.backend_api_base = backend_base.rstrip('/')
         self.auth_client = AuthClient()
         self.frontend_payment_setup_url = os.getenv('FRONTEND_PAYMENT_SETUP_URL', 'http://localhost:5173')
-        self.frontend_stake_launch_url = os.getenv('FRONTEND_STAKE_LAUNCH_URL', 'http://localhost:5173')
-        self._stake_taunts: dict[int, list[tuple[str, str]]] = {}
+        self.frontend_session_launch_url = os.getenv('FRONTEND_SESSION_LAUNCH_URL', 'http://localhost:5173')
+        self._session_taunts: dict[int, list[tuple[str, str]]] = {}
 
-    async def _create_stake_via_api(
+    async def _create_session_via_api(
         self,
         token: str,
         amount_cents: int,
@@ -423,25 +423,25 @@ class General(commands.Cog, name='general'):
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f'{self.backend_api_base}/stakes',
+                f"{self.backend_api_base}/sessions",
                 json=body,
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=20),
             ) as response:
                 if response.status != 201:
                     detail = await response.text()
-                    return False, f'Stake creation failed ({response.status}): {detail[:300]}', None
+                    return False, f"Session creation failed ({response.status}): {detail[:300]}", None
 
                 payload: Any = await response.json()
-                stake_id = payload.get('id') if isinstance(payload, dict) else None
-                if stake_id is None:
-                    return True, 'Stake created successfully.', None
-                return True, f'Stake #{stake_id} created successfully.', int(stake_id)
+                session_id = payload.get("id") if isinstance(payload, dict) else None
+                if session_id is None:
+                    return True, "Session created successfully, loading...", None
+                return True, f"Session created successfully, loading...", int(session_id)
 
-    async def _add_stake_recipient_via_api(
+    async def _add_session_recipient_via_api(
         self,
         token: str,
-        stake_id: int,
+        session_id: int,
         recipient_discord_uid: int,
     ) -> tuple[bool, str]:
         headers = {
@@ -452,35 +452,35 @@ class General(commands.Cog, name='general'):
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f'{self.backend_api_base}/stakes/{stake_id}/recipients',
+                f"{self.backend_api_base}/sessions/{session_id}/recipients",
                 headers=headers,
                 json=body,
                 timeout=aiohttp.ClientTimeout(total=20),
             ) as response:
                 if response.status not in {200, 201}:
                     detail = await response.text()
-                    return False, f'Add recipient failed ({response.status}): {detail[:300]}'
+                    return False, f'Add doubter failed ({response.status}): {detail[:300]}'
                 return True, ''
 
-    async def _get_stake_via_api(
+    async def _get_session_via_api(
         self,
         token: str,
-        stake_id: int,
+        session_id: int,
     ) -> tuple[bool, str, Optional[dict[str, Any]]]:
         headers = {'Authorization': f'Bearer {token}'}
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                f'{self.backend_api_base}/stakes/{stake_id}',
+                f"{self.backend_api_base}/sessions/{session_id}",
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=20),
             ) as response:
                 if response.status != 200:
                     detail = await response.text()
-                    return False, f'Fetch stake failed ({response.status}): {detail[:300]}', None
+                    return False, f"Fetch session failed ({response.status}): {detail[:300]}", None
                 payload: Any = await response.json()
                 if not isinstance(payload, dict):
-                    return False, 'Could not parse stake response payload.', None
-                return True, '', payload
+                    return False, "Could not parse session response payload.", None
+                return True, "", payload
 
     def _parse_backend_datetime(self, raw: Optional[str]) -> Optional[datetime]:
         if not raw:
@@ -495,23 +495,23 @@ class General(commands.Cog, name='general'):
             return None
 
     @staticmethod
-    def _extract_recipient_names(stake_payload: dict[str, Any]) -> list[str]:
+    def _extract_recipient_names(session_payload: dict[str, Any]) -> list[str]:
         names: list[str] = []
-        for r in stake_payload.get('recipients') or []:
+        for r in session_payload.get('recipients') or []:
             if isinstance(r, dict):
                 u = r.get('recipient_username')
                 if u:
                     names.append(str(u))
         return names
 
-    def _stake_live_description(
+    def _session_live_description(
         self,
-        stake_payload: dict[str, Any],
+        session_payload: dict[str, Any],
         seconds_left: int,
     ) -> str:
-        amount_cents = int(stake_payload.get('amount_cents') or 0)
-        distraction_count = int(stake_payload.get('distraction_count') or 0)
-        doubters_text = ', '.join(self._extract_recipient_names(stake_payload)) or 'none'
+        amount_cents = int(session_payload.get('amount_cents') or 0)
+        distraction_count = int(session_payload.get('distraction_count') or 0)
+        doubters_text = ', '.join(self._extract_recipient_names(session_payload)) or 'none'
         return (
             f'Bet: **${amount_cents / 100:.2f}**\n'
             f'Doubters: {doubters_text}\n'
@@ -519,14 +519,14 @@ class General(commands.Cog, name='general'):
             f'Time left: **{format_duration(max(0, seconds_left))}**'
         )
 
-    def _stake_final_summary(
-        self, stake_payload: dict[str, Any], taunts: Optional[list[tuple[str, str]]] = None
+    def _session_final_summary(
+        self, session_payload: dict[str, Any], taunts: Optional[list[tuple[str, str]]] = None
     ) -> str:
-        status = str(stake_payload.get('status') or 'unknown')
-        amount_cents = int(stake_payload.get('amount_cents') or 0)
-        distraction_count = int(stake_payload.get('distraction_count') or 0)
-        elapsed = int(stake_payload.get('elapsed_seconds') or 0)
-        doubters_text = ', '.join(self._extract_recipient_names(stake_payload)) or 'none'
+        status = str(session_payload.get('status') or 'unknown')
+        amount_cents = int(session_payload.get('amount_cents') or 0)
+        distraction_count = int(session_payload.get('distraction_count') or 0)
+        elapsed = int(session_payload.get('elapsed_seconds') or 0)
+        doubters_text = ', '.join(self._extract_recipient_names(session_payload)) or 'none'
         if status == 'completed':
             if distraction_count == 0:
                 outcome = '✅ **Flawless.** Not a single distraction.'
@@ -555,10 +555,10 @@ class General(commands.Cog, name='general'):
                 lines.append(f'\n**What the doubters said:**\n{taunt_lines}')
         return '\n'.join(lines)
 
-    async def _stream_stake_events(
+    async def _stream_session_events(
         self,
         token: str,
-        stake_id: int,
+        session_id: int,
         queue: asyncio.Queue[dict[str, Any]],
     ) -> None:
         headers = {'Authorization': f'Bearer {token}'}
@@ -567,7 +567,7 @@ class General(commands.Cog, name='general'):
             try:
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.get(
-                        f'{self.backend_api_base}/stakes/{stake_id}/events',
+                        f"{self.backend_api_base}/sessions/{session_id}/events",
                         headers=headers,
                     ) as response:
                         if response.status != 200:
@@ -594,24 +594,24 @@ class General(commands.Cog, name='general'):
             except Exception:
                 await asyncio.sleep(2)
 
-    async def _run_live_stake_message(
+    async def _run_live_session_message(
         self,
         message: discord.Message,
         token: str,
-        stake_id: int,
+        session_id: int,
         fallback_duration_seconds: int,
         session_title: str = 'Study Session',
         live_view: Optional[discord.ui.View] = None,
     ) -> None:
-        stake_payload: Optional[dict[str, Any]] = None
+        session_payload: Optional[dict[str, Any]] = None
         activation_time: Optional[datetime] = None
         duration_seconds = fallback_duration_seconds
         resolving_since: Optional[datetime] = None
         event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        event_task = asyncio.create_task(self._stream_stake_events(token, stake_id, event_queue))
+        event_task = asyncio.create_task(self._stream_session_events(token, session_id, event_queue))
 
         try:
-            ok, fetch_message, payload = await self._get_stake_via_api(token=token, stake_id=stake_id)
+            ok, fetch_message, payload = await self._get_session_via_api(token=token, session_id=session_id)
             if not ok or payload is None:
                 await message.edit(
                     embed=make_snitch_embed(
@@ -621,32 +621,31 @@ class General(commands.Cog, name='general'):
                     view=live_view,
                 )
                 return
-            stake_payload = payload
-            duration_seconds = int(stake_payload.get('duration_seconds') or duration_seconds)
-            activation_time = self._parse_backend_datetime(stake_payload.get('activated_at'))
+            session_payload = payload
+            duration_seconds = int(session_payload.get("duration_seconds") or duration_seconds)
+            activation_time = self._parse_backend_datetime(session_payload.get("activated_at"))
 
             while True:
                 while not event_queue.empty():
                     payload = await event_queue.get()
-                    stake_payload = payload
-                    duration_seconds = int(stake_payload.get('duration_seconds') or duration_seconds)
-                    activation_time = self._parse_backend_datetime(stake_payload.get('activated_at'))
+                    session_payload = payload
+                    duration_seconds = int(session_payload.get("duration_seconds") or duration_seconds)
+                    activation_time = self._parse_backend_datetime(session_payload.get("activated_at"))
 
-                if stake_payload is None:
+                if session_payload is None:
                     await asyncio.sleep(1)
                     continue
 
-                status = str(stake_payload.get('status') or 'unknown')
-
-                if status in {'completed', 'failed', 'paid_out', 'cancelled'}:
+                status = str(session_payload.get("status") or "unknown")
+                if status in {"completed", "failed", "paid_out", "cancelled"}:
                     if live_view is not None:
                         for child in live_view.children:
                             child.disabled = True
                         live_view.stop()
                     await message.edit(
                         embed=make_snitch_embed(
-                            self._stake_final_summary(
-                                stake_payload, taunts=self._stake_taunts.get(stake_id, [])
+                            self._session_final_summary(
+                                session_payload, taunts=self._session_taunts.get(session_id, [])
                             ),
                             title=session_title,
                         ),
@@ -657,9 +656,9 @@ class General(commands.Cog, name='general'):
                 if status != 'active' or activation_time is None:
                     await message.edit(
                         embed=make_snitch_embed(
-                            f'Waiting for you to start in Snitch...\n'
-                            f'Bet: **${int(stake_payload.get("amount_cents") or 0) / 100:.2f}**',
-                            title=session_title,
+                            "Session created. Waiting for session start from Snitch...\n"
+                            f"Owner: **{session_payload.get('creator_username', 'unknown')}**\n"
+                            f"Bet: **${int(session_payload.get('amount_cents') or 0) / 100:.2f}**"
                         ),
                         view=live_view,
                     )
@@ -687,7 +686,9 @@ class General(commands.Cog, name='general'):
 
                 await message.edit(
                     embed=make_snitch_embed(
-                        self._stake_live_description(stake_payload=stake_payload, seconds_left=seconds_left),
+                        self._session_live_description(
+                            session_payload=session_payload, seconds_left=seconds_left
+                        ),
                         title=session_title,
                     ),
                     view=live_view,
@@ -698,20 +699,20 @@ class General(commands.Cog, name='general'):
             with contextlib.suppress(asyncio.CancelledError):
                 await event_task
 
-    async def _create_stake_launch_token_via_api(
+    async def _create_session_launch_token_via_api(
         self,
         token: str,
-        stake_id: int,
+        session_id: int,
     ) -> tuple[bool, str, Optional[str]]:
         headers = {
             'Authorization': f'Bearer {token}',
             'Content-Type': 'application/json',
         }
-        body = {'stake_id': stake_id}
+        body = {"session_id": session_id}
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f'{self.backend_api_base}/auth/stake-launch-token',
+                f"{self.backend_api_base}/auth/session-launch-token",
                 json=body,
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=20),
@@ -725,12 +726,12 @@ class General(commands.Cog, name='general'):
                     return False, 'Launch token response did not include launch_token.', None
                 return True, '', str(launch_token)
 
-    def _build_stake_launch_url(self, stake_id: int, launch_token: str) -> str:
-        split = urlsplit(self.frontend_stake_launch_url)
+    def _build_session_launch_url(self, session_id: int, launch_token: str) -> str:
+        split = urlsplit(self.frontend_session_launch_url)
         query = dict(parse_qsl(split.query, keep_blank_values=True))
-        query['stake_id'] = str(stake_id)
-        query['auto_start'] = '1'
-        query['launch_token'] = launch_token
+        query["session_id"] = str(session_id)
+        query["auto_start"] = "1"
+        query["launch_token"] = launch_token
         return urlunsplit((split.scheme, split.netloc, split.path, urlencode(query), split.fragment))
 
     def _build_auth_view(self, discord_uid: int, status: Optional[dict[str, Any]]) -> Optional[discord.ui.View]:
@@ -768,7 +769,7 @@ class General(commands.Cog, name='general'):
         except asyncio.TimeoutError:
             await prompt_message.edit(
                 embed=make_snitch_embed(
-                    "Took too long. Run `/stake` again when you're ready.",
+                    "Took too long. Run `/session` again when you're ready.",
                     is_error=True,
                 ),
                 view=None,
@@ -776,10 +777,10 @@ class General(commands.Cog, name='general'):
             return None
 
     @commands.hybrid_command(
-        name='stake',
-        description='Put money on the line and stay focused — or pay up.',
+        name="session",
+        description="Create a session session and invite doubters.",
     )
-    async def stake(self, context: Context) -> None:
+    async def session(self, context: Context) -> None:
         if context.guild is None:
             await context.send(embed=make_snitch_embed('This command can only be used in a server.', is_error=True))
             return
@@ -814,7 +815,7 @@ class General(commands.Cog, name='general'):
         if recipient_mode_view.mode is None:
             await prompt_message.edit(
                 embed=make_snitch_embed(
-                    "You didn't choose in time. Run `/stake` again when you're ready.", is_error=True
+                    "You didn't choose in time. Run `/session` again when you're ready.", is_error=True
                 ),
                 view=None,
             )
@@ -836,7 +837,7 @@ class General(commands.Cog, name='general'):
             except asyncio.TimeoutError:
                 await prompt_message.edit(
                     embed=make_snitch_embed(
-                        "Took too long. Run `/stake` again when you've got your doubters ready.",
+                        "Took too long. Run `/session` again when you've got your doubters ready.",
                         is_error=True,
                     ),
                     view=None,
@@ -881,7 +882,7 @@ class General(commands.Cog, name='general'):
 
             if max_recipients is None:
                 await prompt_message.edit(
-                    embed=make_snitch_embed("Too many tries. Run `/stake` again when you're ready.", is_error=True),
+                    embed=make_snitch_embed("Too many tries. Run `/session` again when you're ready.", is_error=True),
                     view=None,
                 )
                 return
@@ -909,7 +910,7 @@ class General(commands.Cog, name='general'):
 
         if bet_amount is None:
             await prompt_message.edit(
-                embed=make_snitch_embed("Too many tries. Run `/stake` again when you're ready.", is_error=True),
+                embed=make_snitch_embed("Too many tries. Run `/session` again when you're ready.", is_error=True),
                 view=None,
             )
             return
@@ -937,12 +938,12 @@ class General(commands.Cog, name='general'):
 
         if duration_seconds is None:
             await prompt_message.edit(
-                embed=make_snitch_embed("Too many tries. Run `/stake` again when you're ready.", is_error=True),
+                embed=make_snitch_embed("Too many tries. Run `/session` again when you're ready.", is_error=True),
                 view=None,
             )
             return
 
-        # In open-join mode, show a lobby and wait for at least one joiner before creating the stake.
+        # In open-join mode, show a lobby and wait for at least one joiner before creating the session.
         lobby_view: Optional[LobbyView] = None
         if recipient_mode_view.mode == 'anyone':
             lobby_view = LobbyView(
@@ -964,7 +965,7 @@ class General(commands.Cog, name='general'):
             if not lobby_view.started:
                 await prompt_message.edit(
                     embed=make_snitch_embed(
-                        'Nobody showed up. Run `/stake` again when your doubters are ready.', is_error=True
+                        'Nobody showed up. Run `/session` again when your doubters are ready.', is_error=True
                     ),
                     view=None,
                 )
@@ -984,7 +985,7 @@ class General(commands.Cog, name='general'):
             ),
             view=None,
         )
-        created, creation_message, stake_id = await self._create_stake_via_api(
+        created, creation_message, session_id = await self._create_session_via_api(
             token=token,
             amount_cents=amount_cents,
             duration_seconds=duration_seconds,
@@ -1001,10 +1002,10 @@ class General(commands.Cog, name='general'):
             embed=make_snitch_embed(creation_message),
             view=None,
         )
-        if stake_id is None:
+        if session_id is None:
             await prompt_message.edit(
                 embed=make_snitch_embed(
-                    'Stake created, but no stake ID was returned by backend. Cannot continue.',
+                    "Session created, but no session ID was returned by backend. Cannot continue.",
                     is_error=True,
                 ),
                 view=None,
@@ -1012,11 +1013,11 @@ class General(commands.Cog, name='general'):
             return
 
         if lobby_view is not None:
-            self._stake_taunts[stake_id] = list(lobby_view.taunts)
+            self._session_taunts[session_id] = list(lobby_view.taunts)
 
-        launch_ok, launch_message, launch_token = await self._create_stake_launch_token_via_api(
+        launch_ok, launch_message, launch_token = await self._create_session_launch_token_via_api(
             token=token,
-            stake_id=stake_id,
+            session_id=session_id,
         )
         if not launch_ok or launch_token is None:
             await prompt_message.edit(
@@ -1024,33 +1025,33 @@ class General(commands.Cog, name='general'):
                 view=None,
             )
             return
-        start_url = self._build_stake_launch_url(stake_id=stake_id, launch_token=launch_token)
-        if recipient_mode_view.mode == 'mention':
-            mention_text = ' '.join(user.mention for user in recipients)
-            start_view = StartStakeView(start_url=start_url, author_id=context.author.id)
+        start_url = self._build_session_launch_url(session_id=session_id, launch_token=launch_token)
+        if recipient_mode_view.mode == "mention":
+            mention_text = " ".join(user.mention for user in recipients)
+            start_view = StartSessionView(start_url=start_url, author_id=context.author.id)
             await prompt_message.edit(
                 embed=make_snitch_embed(
-                    f"You're all set! Your doubters are locked in.\n"
-                    f'Doubters: {mention_text}\n'
-                    'Hit the button below to open Snitch and start your session.',
-                    title=f"{context.author.display_name}'s Study Session",
+                    "Session is ready.\n"
+                    "Doubters are locked because you chose mention mode.\n"
+                    f"Doubters: {mention_text}\n"
+                    "Use the button below to open Snitch, sign in with Discord, and auto-start the session."
                 ),
                 view=start_view,
             )
-            await self._run_live_stake_message(
+            await self._run_live_session_message(
                 message=prompt_message,
                 token=token,
-                stake_id=stake_id,
+                session_id=session_id,
                 fallback_duration_seconds=duration_seconds,
                 session_title=f"{context.author.display_name}'s Study Session",
                 live_view=start_view,
             )
             return
 
-        open_join_view = OpenStakeSessionView(
+        open_join_view = OpenSessionSessionView(
             cog=self,
             author_id=context.author.id,
-            stake_id=stake_id,
+            session_id=session_id,
             token=token,
             max_recipients=max_recipients or 1,
             duration_seconds=duration_seconds,
@@ -1066,10 +1067,10 @@ class General(commands.Cog, name='general'):
             ),
             view=open_join_view,
         )
-        await self._run_live_stake_message(
+        await self._run_live_session_message(
             message=prompt_message,
             token=token,
-            stake_id=stake_id,
+            session_id=session_id,
             fallback_duration_seconds=duration_seconds,
             session_title=f"{context.author.display_name}'s Study Session",
             live_view=open_join_view,

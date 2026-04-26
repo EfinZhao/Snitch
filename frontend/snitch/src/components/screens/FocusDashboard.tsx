@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import Button from "../atoms/Button";
 import { apiPost, apiGet, apiPatch, ApiError } from "../../api/client";
 import type { CameraMonitorState } from "../../hooks/useCameraMonitor";
-import type { Screen, UserProfile, StakeRead } from "../../types";
+import type { Screen, UserProfile, SessionRead } from "../../types";
 
 const DEFAULT_SECONDS = 25 * 60;
 const CX = 124,
@@ -55,7 +55,7 @@ type Recipient = { username: string };
 type SearchResult = { id: number; username: string };
 
 type PersistedSession = {
-  stakeId: number;
+  sessionId: number;
   endEpoch: number; // absolute ms timestamp when the timer expires
   durationSeconds: number;
   amountCents: number;
@@ -93,10 +93,10 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
   const [distractions, setDistractions] = useState<number[]>([]);
   const [amountCents, setAmountCents] = useState(0);
 
-  // Stakes / session
+  // Sessions / session
   const [amount, setAmount] = useState("");
   const [recipients, setRecipients] = useState<Recipient[]>([]);
-  const [stakeId, setStakeId] = useState<number | null>(null);
+  const [sessionId, setSessionId] = useState<number | null>(null);
   const [locking, setLocking] = useState(false);
   const [lockError, setLockError] = useState("");
 
@@ -111,7 +111,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Refs for stale-closure-safe event handlers (set up with [] deps)
-  const stakeIdRef = useRef<number | null>(null);
+  const sessionIdRef = useRef<number | null>(null);
   const secondsRef = useRef(DEFAULT_SECONDS);
   const totalSecondsRef = useRef(DEFAULT_SECONDS);
   const distractionsRef = useRef<number[]>([]);
@@ -122,7 +122,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
 
   // Keep refs in sync after every render
   useEffect(() => {
-    stakeIdRef.current = stakeId;
+    sessionIdRef.current = sessionId;
     secondsRef.current = seconds;
     totalSecondsRef.current = totalSeconds;
     distractionsRef.current = distractions;
@@ -180,7 +180,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         /* eslint-enable react-hooks/set-state-in-effect */
         notifyExtension(false);
         apiPost(
-          `/stakes/${session.stakeId}/resolve`,
+          `/sessions/${session.sessionId}/resolve`,
           { elapsed_seconds: elapsed },
           token,
         ).catch(() => {});
@@ -203,14 +203,14 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
       /* eslint-enable react-hooks/set-state-in-effect */
       notifyExtension(false);
       apiPost(
-        `/stakes/${session.stakeId}/resolve`,
+        `/sessions/${session.sessionId}/resolve`,
         { elapsed_seconds: session.durationSeconds },
         token,
       ).catch(() => {});
       return;
     }
     /* eslint-disable react-hooks/set-state-in-effect */
-    setStakeId(session.stakeId);
+    setSessionId(session.sessionId);
     setTotalSeconds(session.durationSeconds);
     setSeconds(remaining);
     setDistractions(session.distractionFractions);
@@ -227,7 +227,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
   useEffect(() => {
     function handleVisible() {
       const awayAtStr = localStorage.getItem(AWAY_KEY);
-      if (!awayAtStr || stakeIdRef.current === null) {
+      if (!awayAtStr || sessionIdRef.current === null) {
         localStorage.removeItem(AWAY_KEY);
         return;
       }
@@ -235,7 +235,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
       localStorage.removeItem(AWAY_KEY);
 
       if (awayMs > AWAY_LIMIT_MS) {
-        const id = stakeIdRef.current;
+        const id = sessionIdRef.current;
         // Compute elapsed from endEpoch so it's accurate regardless of how long we were away
         let elapsed = totalSecondsRef.current - secondsRef.current;
         const raw = localStorage.getItem(SESSION_KEY);
@@ -259,10 +259,10 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
           elapsedSeconds: elapsed,
         });
         setRunning(false);
-        setStakeId(null);
+        setSessionId(null);
         stopCameraRef.current();
         apiPost(
-          `/stakes/${id}/resolve`,
+          `/sessions/${id}/resolve`,
           { elapsed_seconds: elapsed },
           tokenRef.current,
         ).catch(() => {});
@@ -288,7 +288,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     }
 
     function handleBeforeUnload() {
-      if (stakeIdRef.current !== null) {
+      if (sessionIdRef.current !== null) {
         localStorage.setItem(AWAY_KEY, String(Date.now()));
       }
     }
@@ -309,7 +309,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     const latest = cameraMonitor.events[0];
     if (!latest || latest.stage !== "distracted") return;
     if (latest.id <= lastProcessedEventIdRef.current) return;
-    if (!stakeIdRef.current) return;
+    if (!sessionIdRef.current) return;
     lastProcessedEventIdRef.current = latest.id;
     addArcMark();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -329,8 +329,8 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
 
   // ── Auto-resolve when timer reaches 0 ──────────────────────────────────
   useEffect(() => {
-    if (!running || seconds !== 0 || stakeId === null) return;
-    const id = stakeId;
+    if (!running || seconds !== 0 || sessionId === null) return;
+    const id = sessionId;
     const total = totalSeconds;
     const cents = amountCents;
     const strikes = distractions.length;
@@ -341,18 +341,18 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         : "Too many distractions.";
     /* eslint-disable react-hooks/set-state-in-effect */
     setRunning(false);
-    setStakeId(null);
+    setSessionId(null);
     setSummary({ outcome, reason, amountCents: cents, strikes, totalSeconds: total, elapsedSeconds: total });
     /* eslint-enable react-hooks/set-state-in-effect */
     localStorage.removeItem(SESSION_KEY);
     localStorage.removeItem(AWAY_KEY);
     stopCameraRef.current();
     notifyExtension(false);
-    apiPost(`/stakes/${id}/resolve`, { outcome, elapsed_seconds: total }, token).catch(() => {});
+    apiPost(`/sessions/${id}/resolve`, { outcome, elapsed_seconds: total }, token).catch(() => {});
   }, [
     running,
     seconds,
-    stakeId,
+    sessionId,
     totalSeconds,
     token,
     amountCents,
@@ -361,11 +361,11 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
 
   // ── Periodic progress sync ──────────────────────────────────────────────
   useEffect(() => {
-    if (!running || stakeId === null) return;
+    if (!running || sessionId === null) return;
     const id = setInterval(() => {
       const elapsed = totalSeconds - seconds;
       apiPatch(
-        `/stakes/${stakeId}`,
+        `/sessions/${sessionId}`,
         { distraction_count: distractions.length, elapsed_seconds: elapsed },
         token,
       ).catch(() => {});
@@ -380,7 +380,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
       }
     }, SYNC_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [running, stakeId, distractions, seconds, totalSeconds, token]);
+  }, [running, sessionId, distractions, seconds, totalSeconds, token]);
 
   // ── Time editing ────────────────────────────────────────────────────────
   function startEditing() {
@@ -489,7 +489,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     setRecipients((prev) => prev.filter((r) => r.username !== username));
   }
 
-  // ── Lock In → create + activate stake ──────────────────────────────────
+  // ── Lock In → create + activate session ──────────────────────────────────
   async function handleLockIn() {
     setLockError("");
     const amountNum = parseFloat(amount);
@@ -505,8 +505,8 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     const cents = Math.round(amountNum * 100);
     setLocking(true);
     try {
-      const stake = await apiPost<StakeRead>(
-        "/stakes",
+      const session = await apiPost<SessionRead>(
+        "/sessions",
         {
           amount_cents: cents,
           duration_seconds: totalSeconds,
@@ -514,9 +514,9 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         },
         token,
       );
-      await apiPost<StakeRead>(`/stakes/${stake.id}/activate`, {}, token);
+      await apiPost<SessionRead>(`/sessions/${session.id}/activate`, {}, token);
       setAmountCents(cents);
-      setStakeId(stake.id);
+      setSessionId(session.id);
       // Request camera permission before starting the timer
       await startCameraRef.current();
       // endEpoch is set after camera is granted so model-loading time isn't counted
@@ -525,7 +525,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
       localStorage.setItem(
         SESSION_KEY,
         JSON.stringify({
-          stakeId: stake.id,
+          sessionId: session.id,
           endEpoch,
           durationSeconds: totalSeconds,
           amountCents: cents,
@@ -664,7 +664,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
 
       <br />
 
-      {/* Stakes section */}
+      {/* Sessions section */}
       <div className="flex flex-col items-center gap-3 w-full">
         <div className="flex items-center gap-1 border-b border-outline-variant pb-1">
           <span className="font-display text-base text-on-surface-variant">
