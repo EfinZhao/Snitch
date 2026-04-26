@@ -64,7 +64,7 @@ export default function FocusStats({ navigate, token }: Props) {
     .reduce((acc, s) => acc + s.amount_cents, 0)
 
   const lost = myStakes
-    .filter(s => s.status === 'failed')
+    .filter(s => s.status === 'paid_out')
     .reduce((acc, s) => acc + s.amount_cents, 0)
 
   const streak = computeStreak(myStakes)
@@ -106,7 +106,7 @@ export default function FocusStats({ navigate, token }: Props) {
   }
 
   return (
-    <div className="px-5 py-5 flex flex-col gap-4">
+    <div className="px-5 py-5 flex flex-col gap-4 lg:max-w-[66%] lg:mx-auto">
       <div>
         <h1 className="font-display font-semibold text-4xl text-on-surface leading-tight">
           Your Stats
@@ -132,27 +132,30 @@ export default function FocusStats({ navigate, token }: Props) {
       </Card>
 
       {/* Money lost */}
-      {lost > 0 && (
-        <Card accent="warning">
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="font-body text-xs text-on-error-container tracking-wide uppercase font-semibold">
-                You gave
-              </p>
-              <p className="font-display font-semibold text-3xl text-on-surface mt-0.5">
-                {formatCents(lost)}{' '}
-                <span className="text-sm font-body font-normal text-on-surface-variant">
-                  to your friends
-                </span>
-              </p>
-              <p className="font-body text-xs text-error mt-2">
-                How kind. <span className="font-semibold">Now stop scrolling.</span>
-              </p>
-            </div>
-            <span className="text-2xl">⚠️</span>
+      <Card accent={lost > 0 ? 'warning' : undefined}>
+        <div className="flex items-start justify-between">
+          <div>
+            <p className={[
+              'font-body text-xs tracking-wide uppercase font-semibold',
+              lost > 0 ? 'text-on-error-container' : 'text-on-surface-variant',
+            ].join(' ')}>
+              You gave
+            </p>
+            <p className="font-display font-semibold text-3xl text-on-surface mt-0.5">
+              {formatCents(lost)}{' '}
+              <span className="text-sm font-body font-normal text-on-surface-variant">
+                to your friends
+              </span>
+            </p>
+            <p className="font-body text-xs text-on-surface-variant mt-2">
+              {lost > 0
+                ? <><span className="text-error">How kind.</span> <span className="font-semibold text-error">Now stop scrolling.</span></>
+                : "Keep it up — your friends haven't seen a dime."}
+            </p>
           </div>
-        </Card>
-      )}
+          <span className="text-2xl">{lost > 0 ? '⚠️' : '🎯'}</span>
+        </div>
+      </Card>
 
       {/* Streak */}
       <Card accent="info">
@@ -239,38 +242,86 @@ export default function FocusStats({ navigate, token }: Props) {
           <Card>
             <div className="flex flex-col divide-y divide-outline-variant">
               {recentSessions.map(s => {
-                const focused = s.status === 'completed'
+                const isCompleted = s.status === 'completed'
+                const isPaidOut = s.status === 'paid_out'
+                const isActive = s.status === 'active'
                 const duration = s.elapsed_seconds != null
                   ? formatDuration(s.elapsed_seconds)
                   : formatDuration(s.duration_seconds)
                 return (
-                  <div key={s.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
-                    <div className="w-10 h-10 rounded-full border border-outline-variant bg-surface-container flex items-center justify-center text-lg flex-shrink-0">
-                      {focused ? '✅' : s.status === 'failed' ? '❌' : '⏳'}
+                  <div key={s.id} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
+                    {/* Status icon */}
+                    <div className={[
+                      'w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5',
+                      isCompleted
+                        ? 'bg-green-50 border border-green-300'
+                        : isPaidOut
+                          ? 'bg-error-container border border-error'
+                          : 'bg-surface-container border border-outline-variant',
+                    ].join(' ')}>
+                      {isCompleted ? (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="text-green-600">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      ) : isPaidOut ? (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="text-error">
+                          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      ) : (
+                        <span className="text-sm leading-none">⏳</span>
+                      )}
                     </div>
+
+                    {/* Content */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-baseline justify-between gap-2">
                         <span className="font-body font-semibold text-sm text-on-surface">
                           {formatDate(s.created_at)}
                         </span>
-                        {s.status === 'failed' && (
-                          <span className="text-xs font-body font-semibold text-error">
-                            Penalty: {formatCents(s.amount_cents)}
-                          </span>
-                        )}
+                        <span className="font-body text-xs text-on-surface-variant flex-shrink-0">
+                          {duration}
+                        </span>
                       </div>
-                      <p className="font-body text-xs text-on-surface-variant">
-                        {s.recipients.map(r => `@${r.recipient_username}`).join(', ')}
-                      </p>
-                      <div className="mt-1">
-                        <Chip variant={focused ? 'success' : s.status === 'failed' ? 'warning' : 'default'}>
-                          {focused ? 'Focused' : s.status === 'failed' ? 'Distracted' : s.status}
-                        </Chip>
-                      </div>
+
+                      {isPaidOut ? (
+                        <>
+                          <div className="flex flex-wrap items-center gap-x-2 mt-0.5">
+                            <span className="font-body text-sm font-semibold text-error">
+                              {formatCents(s.amount_cents)} paid out
+                            </span>
+                            {s.distraction_count > 0 && (
+                              <span className="font-body text-xs text-on-surface-variant">
+                                {s.distraction_count} distraction{s.distraction_count !== 1 ? 's' : ''}
+                              </span>
+                            )}
+                          </div>
+                          {s.recipients.length === 1 ? (
+                            <p className="font-body text-xs text-on-surface-variant mt-0.5">
+                              → @{s.recipients[0].recipient_username}
+                            </p>
+                          ) : (
+                            <div className="flex flex-col gap-0.5 mt-1">
+                              {s.recipients.map(r => (
+                                <span key={r.recipient_id} className="font-body text-xs text-on-surface-variant">
+                                  @{r.recipient_username}: {formatCents(r.payout_cents ?? Math.round(s.amount_cents / s.recipients.length))}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <p className="font-body text-xs text-on-surface-variant mt-0.5">
+                            {s.recipients.map(r => `@${r.recipient_username}`).join(', ')}
+                          </p>
+                          {isActive && (
+                            <div className="mt-1">
+                              <Chip variant="default">In progress</Chip>
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
-                    <span className="font-body text-xs text-on-surface-variant flex-shrink-0">
-                      {duration}
-                    </span>
                   </div>
                 )
               })}
