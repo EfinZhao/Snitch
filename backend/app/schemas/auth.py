@@ -11,3 +11,15 @@ class Token(BaseModel):
 class TokenPayload(BaseModel):
     sub: str
     exp: int
+
+
+class StakeLaunchTokenCreate(BaseModel):
+    stake_id: int
+
+
+class StakeLaunchTokenRead(BaseModel):
+    launch_token: str
+
+
+class StakeLaunchLoginRequest(BaseModel):
+    launch_token: str
