@@ -195,16 +195,6 @@ function loadAll() {
       ],
       loadAllData
     );
-  }).catch(() => {
-    // Fallback if message fails
-    chrome.storage.local.get(
-      [
-        "blocklist", "visitLog", "blockingEnabled", "activeSession",
-        "sessionEndEpoch", "sessionTotalSeconds", "sessionDistractionCount",
-        "sessionDistractionFractions", "sessionAmountCents",
-      ],
-      loadAllData
-    );
   });
 }
 
