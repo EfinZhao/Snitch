@@ -13,9 +13,16 @@ const SYNC_INTERVAL_MS = 30_000;
 const AWAY_LIMIT_MS = 30_000;
 const SESSION_KEY = "snitch_session";
 const AWAY_KEY = "snitch_away_at";
-function notifyExtension(active: boolean) {
+interface SessionSyncData {
+  endEpoch: number
+  totalSeconds: number
+  distractionCount: number
+  distractionFractions: number[]
+  amountCents: number
+}
+function notifyExtension(active: boolean, sessionData?: SessionSyncData) {
   window.dispatchEvent(
-    new CustomEvent("snitch-session", { detail: { active } }),
+    new CustomEvent("snitch-session", { detail: { active, ...(sessionData ?? {}) } }),
   );
 }
 
@@ -119,6 +126,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
   const tokenRef = useRef(token);
   const startCameraRef = useRef(cameraMonitor.startCamera);
   const stopCameraRef = useRef(cameraMonitor.stopCamera);
+  const handleExternalStrikeRef = useRef(cameraMonitor.handleExternalStrike);
 
   // Keep refs in sync after every render
   useEffect(() => {
@@ -130,6 +138,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     tokenRef.current = token;
     startCameraRef.current = cameraMonitor.startCamera;
     stopCameraRef.current = cameraMonitor.stopCamera;
+    handleExternalStrikeRef.current = cameraMonitor.handleExternalStrike;
   });
 
   // Once camera is active and models are loaded (or failed), start the timer
@@ -315,10 +324,43 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraMonitor.events]);
 
+  // ── Extension distraction listener ─────────────────────────────────────
+  // The Chrome extension posts blocked-site visits directly to the backend;
+  // this listener receives the relay from content.js and updates the UI.
+  useEffect(() => {
+    function onExtensionDistraction() {
+      if (!sessionIdRef.current) return;
+      handleExternalStrikeRef.current("blocked_site");
+      // Arc mark is added by the camera-events effect above when the new event lands
+    }
+    window.addEventListener("snitch-distraction", onExtensionDistraction);
+    return () => window.removeEventListener("snitch-distraction", onExtensionDistraction);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Push session state to extension whenever it changes ────────────────
+  useEffect(() => {
+    if (!running || sessionId === null) return;
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      const session: PersistedSession | null = raw ? JSON.parse(raw) : null;
+      notifyExtension(true, {
+        endEpoch: session?.endEpoch ?? Date.now() + seconds * 1000,
+        totalSeconds,
+        distractionCount: distractions.length,
+        distractionFractions: distractions,
+        amountCents,
+      });
+    } catch { /* ignore */ }
+  // seconds intentionally excluded — we only need to sync on structural changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, sessionId, distractions, totalSeconds, amountCents]);
+
   // ── Timer tick ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (running && seconds > 0) {
-      intervalRef.current = setInterval(() => setSeconds((s) => s - 1), 1000);
+      intervalRef.current = setInterval(() => {
+        setSeconds(Math.max(0, Math.floor((pendingEndEpochRef.current - Date.now()) / 1000)));
+      }, 1000);
     } else {
       if (intervalRef.current) clearInterval(intervalRef.current);
     }
@@ -640,7 +682,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
               disabled={running}
               className={[
                 "font-display font-semibold text-4xl tabular-nums disabled:cursor-default transition-colors duration-300",
-                running && currentStatus === "distracted"
+                running && (distractions.length >= MAX_STRIKES || currentStatus === "distracted")
                   ? "text-error"
                   : running && currentStatus === "warning"
                     ? "text-yellow-500"
@@ -688,19 +730,35 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         <br />
 
         <div className="font-display text-base">Recipients</div>
-        <div className="flex items-center gap-2 flex-wrap justify-center">
-          {recipients.map(({ username }) => (
-            <button
-              key={username}
-              onClick={() => {
-                if (!running) removeRecipient(username);
-              }}
-              title={running ? `@${username}` : `@${username} — tap to remove`}
-              className="w-15 h-15 rounded-full border-2 border-primary bg-primary-fixed flex items-center justify-center text-xs font-display font-semibold text-primary flex-shrink-0"
-            >
-              {username.slice(0, 2).toUpperCase()}
-            </button>
-          ))}
+        <div className="flex items-start gap-4 flex-wrap justify-center">
+          {recipients.map(({ username }, i) => {
+            const sessionFailed = running && distractions.length >= MAX_STRIKES
+            const base = Math.floor(amountCents / recipients.length)
+            const share = i === recipients.length - 1
+              ? amountCents - base * (recipients.length - 1)
+              : base
+            return (
+              <div key={username} className="flex flex-col items-center gap-1">
+                <button
+                  onClick={() => { if (!running) removeRecipient(username) }}
+                  title={running ? `@${username}` : `@${username} — tap to remove`}
+                  className={[
+                    "w-15 h-15 rounded-full border-2 flex items-center justify-center text-xs font-display font-semibold flex-shrink-0 transition-colors duration-300",
+                    sessionFailed
+                      ? "border-error bg-error-container text-on-error-container"
+                      : "border-primary bg-primary-fixed text-primary",
+                  ].join(" ")}
+                >
+                  {username.slice(0, 2).toUpperCase()}
+                </button>
+                {running && (
+                  <span className="font-display font-semibold text-xs tabular-nums text-primary">
+                    {sessionFailed ? `$${(share / 100).toFixed(2)}` : "$0.00"}
+                  </span>
+                )}
+              </div>
+            )
+          })}
           {!running && (
             <button
               onClick={openModal}

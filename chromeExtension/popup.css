@@ -722,22 +722,80 @@ body::-webkit-scrollbar-thumb {
   color: var(--error);
 }
 
-/* ─── Active session banner ─── */
-.session-banner {
+/* ─── Active session panel with live arc timer ─── */
+.session-panel {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  background: var(--error-container);
-  color: var(--on-error-container);
-  font-family: var(--font-display);
-  font-size: 12px;
-  font-weight: 600;
+  gap: 10px;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--outline-variant);
+  background: var(--surface-low);
   animation: slideIn 0.2s ease;
 }
 
-.session-banner svg {
-  flex-shrink: 0;
+.session-arc-wrap {
+  position: relative;
+  width: 180px;
+  height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.session-arc-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.session-arc-center {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  pointer-events: none;
+}
+
+.session-time {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 30px;
+  color: var(--primary);
+  letter-spacing: -0.02em;
+  transition: color 0.3s ease;
+}
+
+.session-status-label {
+  font-family: var(--font-body);
+  font-size: 10px;
+  color: var(--outline);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.session-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0 2px;
+}
+
+.session-strikes {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--on-surface-variant);
+  transition: color 0.3s ease;
+}
+
+.session-amount {
+  font-family: var(--font-body);
+  font-size: 11px;
+  color: var(--outline);
 }
 
 .block-toggle.locked {

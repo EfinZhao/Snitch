@@ -1,6 +1,7 @@
 const API_BASE = "http://localhost:8000/api";
 const SESSION_CHECK_ALARM = "check-active-session";
 const SESSION_CHECK_INTERVAL_MIN = 0.5; // 30 seconds
+const WARNING_NOTIFICATION_COOLDOWN_MS = 30_000;
 
 const DEFAULT_BLOCKLIST = [
   "youtube.com",
@@ -14,6 +15,15 @@ const DEFAULT_BLOCKLIST = [
   "netflix.com",
   "discord.com",
 ];
+
+const ALERT_CATEGORY_LABELS = {
+  out_of_frame: "Out of frame",
+  phone_detected: "Phone in hand",
+  looking_away: "Looking away",
+};
+
+// In-memory rate-limit timestamp for warning notifications
+let lastWarningNotificationAt = 0;
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get(["blocklist", "visitLog"], (result) => {
@@ -62,6 +72,17 @@ function reportDistraction(hostname, url, token) {
   }).catch(() => {});
 }
 
+// Send a message to all Snitch frontend tabs (localhost)
+function notifyFrontendTabs(message) {
+  chrome.tabs.query({ url: ["http://localhost:*/*", "https://localhost:*/*"] }, (tabs) => {
+    tabs.forEach((tab) => {
+      if (tab.id != null) {
+        chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+      }
+    });
+  });
+}
+
 async function checkActiveSession() {
   return new Promise((resolve) => {
     chrome.storage.local.get(["authToken"], async (result) => {
@@ -101,9 +122,53 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  // ── Session state sync from web app ───────────────────────────────────
   if (message.type === "SESSION_UPDATE") {
-    chrome.storage.local.set({ activeSession: !!message.active });
+    if (message.active) {
+      chrome.storage.local.set({
+        activeSession: true,
+        sessionEndEpoch: message.endEpoch,
+        sessionTotalSeconds: message.totalSeconds,
+        sessionDistractionCount: message.distractionCount ?? 0,
+        sessionDistractionFractions: message.distractionFractions ?? [],
+        sessionAmountCents: message.amountCents ?? 0,
+      });
+    } else {
+      chrome.storage.local.set({ activeSession: false });
+    }
     sendResponse({ ok: true });
+    return true;
+  }
+
+  // ── Camera alert from web app → Chrome notification ────────────────────
+  if (message.type === "SNITCH_ALERT") {
+    chrome.storage.local.get(["activeSession"], (result) => {
+      if (!result.activeSession) return;
+
+      const now = Date.now();
+      const isStrike = message.alertType === "strike";
+      const categoryLabel =
+        ALERT_CATEGORY_LABELS[message.category] || message.category;
+
+      // Rate-limit warnings — don't spam a notification every inference frame
+      if (!isStrike) {
+        if (now - lastWarningNotificationAt < WARNING_NOTIFICATION_COOLDOWN_MS) return;
+        lastWarningNotificationAt = now;
+      }
+
+      chrome.notifications.create(`snitch-alert-${now}`, {
+        type: "basic",
+        iconUrl: "icons/icon128.png",
+        title: isStrike ? "Snitch — Distraction Recorded" : "Snitch — Heads up",
+        message: isStrike
+          ? `${categoryLabel} detected. A strike has been added to your session.`
+          : `${categoryLabel}. Refocus before it counts as a strike.`,
+        priority: isStrike ? 2 : 0,
+        requireInteraction: isStrike,
+      });
+    });
+    sendResponse({ ok: true });
+    return true;
   }
 });
 
@@ -134,6 +199,12 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
           chrome.tabs.update(tabId, { url: blockedUrl });
         }
         return;
+      }
+
+      // During an active session: relay the blocked-site visit to the frontend
+      // so it can add an arc mark and increment the strike counter visually.
+      if (result.activeSession) {
+        notifyFrontendTabs({ type: "EXTENSION_DISTRACTION", hostname, url: tab.url });
       }
 
       chrome.action.setBadgeText({ text: "!", tabId });

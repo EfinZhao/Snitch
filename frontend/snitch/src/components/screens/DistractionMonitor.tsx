@@ -11,6 +11,7 @@ const CATEGORY_LABELS = {
   out_of_frame: 'Out of frame',
   phone_detected: 'Phone detected',
   looking_away: 'Looking away',
+  blocked_site: 'Visited blocked site',
 } as const
 
 function relativeTime(ts: number) {
