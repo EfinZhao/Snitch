@@ -145,19 +145,14 @@ function clearLaunchParamsFromUrl(): void {
   window.history.replaceState(null, "", next);
 }
 
-const OUTER = "h-dvh bg-surface-dim flex justify-center sm:py-8 lg:py-0";
-const AUTH_OUTER = "h-dvh bg-surface flex justify-center items-center";
+const OUTER = "min-h-dvh bg-gradient-to-br from-[#f0f4f9] to-[#e8f0f9] flex flex-col";
+const AUTH_OUTER = "min-h-dvh bg-surface flex justify-center items-center";
 const AUTH_INNER = [
   "flex flex-col w-full h-full",
-  "sm:max-w-[33vw] sm:max-h-[720px]",
+  "sm:max-w-[360px] sm:h-auto sm:shadow-xl sm:rounded-2xl",
   "bg-surface",
 ].join(" ");
-const INNER = [
-  "flex flex-col w-full h-full",
-  "sm:max-w-[480px] sm:rounded-2xl sm:overflow-hidden",
-  "lg:max-w-full lg:rounded-none",
-  "bg-surface",
-].join(" ");
+const INNER = "flex flex-col w-full flex-1";
 
 const Spinner = ({ size = 28 }: { size?: number }) => (
   <svg
@@ -193,58 +188,56 @@ function Shell({
 }) {
   return (
     <>
-      <header className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-outline-variant bg-surface sticky top-0 z-40">
-        <span className="font-display font-semibold text-xl text-primary italic tracking-tight select-none">
+      <header className="flex items-center px-8 h-14 bg-white/80 backdrop-blur-md border-b border-outline-variant sticky top-0 z-40">
+        <span className="font-display font-bold text-xl text-primary italic tracking-tight select-none w-32">
           Snitch
         </span>
-        <button
-          className="w-9 h-9 rounded-full border border-outline-variant bg-surface-container flex items-center justify-center hover:bg-surface-high transition-colors"
-          aria-label="Sign out"
-          onClick={onSignOut}
-          title={`Signed in as @${user.username}`}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 20 20"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.75"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="text-on-surface-variant"
+        {showNav && (
+          <nav className="flex items-center gap-1 flex-1 justify-center">
+            {NAV.map(({ id, label }) => {
+              const active = NAV_ACTIVE[screen] === id;
+              return (
+                <button
+                  key={id}
+                  onClick={() => onNavigate(id)}
+                  className={[
+                    "px-4 py-1.5 font-body font-medium text-sm transition-colors",
+                    active
+                      ? "text-primary font-semibold border-b-2 border-primary"
+                      : "text-on-surface-variant hover:text-on-surface",
+                  ].join(" ")}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </nav>
+        )}
+        <div className="flex items-center gap-2 ml-auto">
+          <button
+            className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors"
+            aria-label="Notifications"
           >
-            <circle cx="10" cy="7" r="3.5" />
-            <path d="M3 18c0-3.866 3.134-7 7-7s7 3.134 7 7" />
-          </svg>
-        </button>
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+            </svg>
+          </button>
+          <button
+            className="w-8 h-8 rounded-full border border-outline-variant bg-surface-container flex items-center justify-center hover:bg-surface-high transition-colors"
+            aria-label="Sign out"
+            onClick={onSignOut}
+            title={`Signed in as @${user.username}`}
+          >
+            <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="text-on-surface-variant">
+              <circle cx="10" cy="7" r="3.5" />
+              <path d="M3 18c0-3.866 3.134-7 7-7s7 3.134 7 7" />
+            </svg>
+          </button>
+        </div>
       </header>
 
       <main className="flex-1 overflow-y-auto">{children}</main>
-
-      {showNav && (
-        <nav className="flex-shrink-0 border-t border-outline-variant bg-surface flex sm:rounded-b-2xl">
-          {NAV.map(({ id, icon, label }) => {
-            const active = NAV_ACTIVE[screen] === id;
-            return (
-              <button
-                key={id}
-                onClick={() => onNavigate(id)}
-                className={[
-                  "flex-1 flex flex-col items-center py-3 gap-0.5",
-                  "text-xs font-body font-semibold uppercase tracking-wide transition-colors",
-                  active
-                    ? "text-primary"
-                    : "text-on-surface-variant hover:text-on-surface",
-                ].join(" ")}
-              >
-                <span className="leading-none">{icon}</span>
-                {label}
-              </button>
-            );
-          })}
-        </nav>
-      )}
     </>
   );
 }
@@ -609,10 +602,8 @@ export default function App() {
   // ── Loading splash ───────────────────────────────────────────────────────
   if (userLoading) {
     return (
-      <div className={OUTER}>
-        <div className={`${INNER} items-center justify-center`}>
-          <Spinner />
-        </div>
+      <div className={`${OUTER} items-center justify-center`}>
+        <Spinner />
       </div>
     );
   }
