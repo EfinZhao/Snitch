@@ -43,9 +43,13 @@ function formatRemaining(seconds: number): string {
 export default function DistractionMonitor({
   navigate: _navigate,
   token,
+  autoStart = false,
+  onAutoStartHandled,
 }: {
   navigate: (screen: Screen) => void;
   token: string | null;
+  autoStart?: boolean;
+  onAutoStartHandled?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -135,6 +139,14 @@ export default function DistractionMonitor({
       setPermission("denied");
     }
   }
+
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (!autoStart || autoStartedRef.current || active) return;
+    autoStartedRef.current = true;
+    onAutoStartHandled?.();
+    void startMonitoring();
+  }, [autoStart, active, onAutoStartHandled]);
 
   function stopMonitoring() {
     streamRef.current?.getTracks().forEach((t) => t.stop());

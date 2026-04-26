@@ -5,7 +5,7 @@ import DistractionMonitor from "./components/screens/DistractionMonitor";
 import AuthScreen from "./components/screens/AuthScreen";
 import StripeCardForm from "./components/StripeCardForm";
 import { apiGet, apiPost } from "./api/client";
-import type { Screen, UserProfile } from "./types";
+import type { Screen, StakeRead, UserProfile } from "./types";
 
 const NAV = [
   {
@@ -111,6 +111,37 @@ function resolveInitialPath(): "return" | "refresh" | null {
 }
 
 const stripeReturn = resolveInitialPath();
+
+type LaunchParams = {
+  launchToken: string | null;
+  autoStartStakeId: number | null;
+};
+
+function parseLaunchParams(): LaunchParams {
+  const params = new URLSearchParams(window.location.search);
+  const launchToken = params.get("launch_token");
+  const autoStart = params.get("auto_start");
+  const stakeIdRaw = params.get("stake_id");
+  const autoStartStakeId =
+    autoStart === "1" && stakeIdRaw && /^\d+$/.test(stakeIdRaw)
+      ? Number(stakeIdRaw)
+      : null;
+  return {
+    launchToken: launchToken && launchToken.length > 0 ? launchToken : null,
+    autoStartStakeId,
+  };
+}
+
+function clearLaunchParamsFromUrl(): void {
+  if (!window.location.search) return;
+  const params = new URLSearchParams(window.location.search);
+  params.delete("launch_token");
+  params.delete("auto_start");
+  params.delete("stake_id");
+  const query = params.toString();
+  const next = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+  window.history.replaceState(null, "", next);
+}
 
 const OUTER = "h-dvh bg-surface-dim flex justify-center sm:py-8 lg:py-0";
 const INNER = [
@@ -449,13 +480,19 @@ function SetupScreen({
 // ── Root app ──────────────────────────────────────────────────────────────────
 
 export default function App() {
+  const launchParams = parseLaunchParams();
   const [token, setToken] = useState<string | null>(() =>
     localStorage.getItem("snitch_token"),
+  );
+  const [launchToken, setLaunchToken] = useState<string | null>(launchParams.launchToken);
+  const [pendingAutoStartStakeId, setPendingAutoStartStakeId] = useState<number | null>(
+    launchParams.autoStartStakeId,
   );
   const [user, setUser] = useState<UserProfile | null>(null);
   // userLoading only applies when a token exists and we haven't fetched the profile yet
   const [userLoading, setUserLoading] = useState(!!token);
   const [screen, setScreen] = useState<Screen>("dashboard");
+  const [dashboardRenderKey, setDashboardRenderKey] = useState(0);
 
   // Fetch user profile whenever the token changes
   useEffect(() => {
@@ -474,6 +511,63 @@ export default function App() {
         setUserLoading(false);
       });
   }, [token]);
+
+  // Secure bot launch: exchange a short-lived launch token for a real session token.
+  // Important: this must run even if a token already exists, so launch links
+  // override stale sessions from a different user.
+  useEffect(() => {
+    if (!launchToken) return;
+    apiPost<{ access_token: string; token_type: string }>("/auth/launch-login", {
+      launch_token: launchToken,
+    })
+      .then(({ access_token }) => {
+        localStorage.setItem("snitch_token", access_token);
+        setToken(access_token);
+        setLaunchToken(null);
+        clearLaunchParamsFromUrl();
+      })
+      .catch(() => {
+        setLaunchToken(null);
+        clearLaunchParamsFromUrl();
+      });
+  }, [token, launchToken]);
+
+  // Launch flow: activate stake, then hydrate Home dashboard session state.
+  useEffect(() => {
+    if (!token || pendingAutoStartStakeId == null) return;
+    const stakeId = pendingAutoStartStakeId;
+    apiPost<StakeRead>(`/stakes/${stakeId}/activate`, {}, token)
+      .catch(() => {
+        // If already active, continue by fetching details.
+        return null;
+      })
+      .then(async (activatedStake) => {
+        const stake =
+          activatedStake ??
+          (await apiGet<StakeRead>(`/stakes/${stakeId}`, token));
+
+        const elapsed = Math.max(0, stake.elapsed_seconds ?? 0);
+        const remaining = Math.max(0, stake.duration_seconds - elapsed);
+        localStorage.setItem(
+          "snitch_session",
+          JSON.stringify({
+            stakeId: stake.id,
+            endEpoch: Date.now() + remaining * 1000,
+            durationSeconds: stake.duration_seconds,
+            amountCents: stake.amount_cents,
+            recipientUsernames: stake.recipients.map((r) => r.recipient_username),
+            distractionFractions: [],
+          }),
+        );
+        localStorage.removeItem("snitch_away_at");
+        setScreen("dashboard");
+        setDashboardRenderKey((k) => k + 1);
+      })
+      .finally(() => {
+        setPendingAutoStartStakeId(null);
+        clearLaunchParamsFromUrl();
+      });
+  }, [token, pendingAutoStartStakeId]);
 
   // Derive: if there is no token the cached user object should not be trusted
   const activeUser = token ? user : null;
@@ -541,6 +635,7 @@ export default function App() {
         >
           {screen === "dashboard" && (
             <FocusDashboard
+              key={dashboardRenderKey}
               navigate={navigate}
               token={token}
               user={activeUser}
