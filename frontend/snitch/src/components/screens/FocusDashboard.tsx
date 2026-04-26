@@ -240,7 +240,10 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     if (remaining <= 0) {
       localStorage.removeItem(SESSION_KEY);
       localStorage.removeItem(AWAY_KEY);
-      const timerDoneOutcome = session.distractionFractions.length >= MAX_STRIKES ? "failed" : "completed";
+      const timerDoneOutcome =
+        session.distractionFractions.length >= MAX_STRIKES
+          ? "failed"
+          : "completed";
       /* eslint-disable react-hooks/set-state-in-effect */
       setSummary({
         outcome: timerDoneOutcome,
@@ -714,75 +717,86 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
           className="absolute rounded-full border-2 border-dashed border-outline-variant opacity-40"
           style={{ width: CIRCLE_SIZE + 28, height: CIRCLE_SIZE + 28 }}
         />
-        <div key={ringBounceKey} className={ringBounceKey > 0 ? "animate-ring-pop absolute" : "absolute"}>
-        <svg
-          width={CIRCLE_SIZE}
-          height={CIRCLE_SIZE}
-          className="pointer-events-none"
-          style={{ transform: "rotate(-90deg) scaleX(1)", overflow: "visible" }}
+        <div
+          key={ringBounceKey}
+          className={
+            ringBounceKey > 0 ? "animate-ring-pop absolute" : "absolute"
+          }
         >
-          {/* Background track */}
-          <circle
-            cx={CX}
-            cy={CY}
-            r={R}
-            fill="none"
-            stroke="var(--color-outline-variant)"
-            strokeWidth={isTimerActive ? 3 : 2}
-            opacity="0.3"
+          <svg
+            width={CIRCLE_SIZE}
+            height={CIRCLE_SIZE}
+            className="pointer-events-none"
             style={{
-              transition: "stroke-width 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)",
+              transform: "rotate(-90deg) scaleX(1)",
+              overflow: "visible",
             }}
-          />
+          >
+            {/* Background track */}
+            <circle
+              cx={CX}
+              cy={CY}
+              r={R}
+              fill="none"
+              stroke="var(--color-outline-variant)"
+              strokeWidth={isTimerActive ? 3 : 2}
+              opacity="0.3"
+              style={{
+                transition:
+                  "stroke-width 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)",
+              }}
+            />
 
-          {/* Normal / warning arc — fades out when distracted */}
-          <circle
-            cx={CX}
-            cy={CY}
-            r={R}
-            fill="none"
-            stroke={arcColor}
-            strokeWidth={arcStrokeWidth}
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            strokeDashoffset={elapsed * circumference}
-            style={{
-              transition:
-                "stroke 0.4s ease, stroke-width 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.35s ease",
-              opacity: isDistracted ? 0 : 1,
-            }}
-          />
+            {/* Normal / warning arc — fades out when distracted */}
+            <circle
+              cx={CX}
+              cy={CY}
+              r={R}
+              fill="none"
+              stroke={arcColor}
+              strokeWidth={arcStrokeWidth}
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={elapsed * circumference}
+              style={{
+                transition:
+                  "stroke 0.4s ease, stroke-width 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.35s ease",
+                opacity: isDistracted ? 0 : 1,
+              }}
+            />
 
-          {/* Heartbeat arc — fades in when distracted */}
-          <circle
-            cx={CX}
-            cy={CY}
-            r={R}
-            fill="none"
-            stroke="#ef4444"
-            strokeWidth={arcStrokeWidth}
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            strokeDashoffset={elapsed * circumference}
-            style={{
-              transition:
-                "opacity 0.35s ease, stroke-width 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)",
-              opacity: isDistracted ? 1 : 0,
-              animation: isDistracted ? "heartbeat 2s ease-in-out infinite" : "none",
-            }}
-          />
+            {/* Heartbeat arc — fades in when distracted */}
+            <circle
+              cx={CX}
+              cy={CY}
+              r={R}
+              fill="none"
+              stroke="#ef4444"
+              strokeWidth={arcStrokeWidth}
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={elapsed * circumference}
+              style={{
+                transition:
+                  "opacity 0.35s ease, stroke-width 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)",
+                opacity: isDistracted ? 1 : 0,
+                animation: isDistracted
+                  ? "heartbeat 2s ease-in-out infinite"
+                  : "none",
+              }}
+            />
 
-          {distractions.map((fraction, i) => {
-            const pt = fractionToPoint(fraction);
-            return (
-              <polygon
-                key={i}
-                points={trianglePoints(pt.x, pt.y)}
-                fill="#ef4444"
-              />
-            );
-          })}
-        </svg>
+            {distractions.map((fraction, i) => {
+              const pt = fractionToPoint(fraction);
+              return (
+                <polygon
+                  key={i}
+                  points={trianglePoints(pt.x, pt.y)}
+                  fill="#ef4444"
+                />
+              );
+            })}
+          </svg>
         </div>
 
         <div
@@ -898,7 +912,9 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
           <div className="flex-1 flex items-start">
             {editingAmount && !running ? (
               <div className="flex items-center tabular-nums">
-                <span className="font-display font-bold text-3xl text-primary">$</span>
+                <span className="font-display font-bold text-3xl text-primary">
+                  $
+                </span>
                 <input
                   ref={(el) => el?.focus()}
                   type="text"
@@ -1069,179 +1085,183 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
       )}
 
       {/* Add recipient modal */}
-      {showModal && createPortal(
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) closeModal();
-          }}
-        >
-          <div className="absolute inset-0 bg-black/40" />
-          <div className="relative w-72 bg-surface rounded-2xl px-6 pt-6 pb-6 flex flex-col gap-4 shadow-xl">
-            <h2 className="font-display font-semibold text-xl text-on-surface">
-              Add Recipient
-            </h2>
+      {showModal &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) closeModal();
+            }}
+          >
+            <div className="absolute inset-0 bg-black/40" />
+            <div className="relative w-72 bg-surface rounded-2xl px-6 pt-6 pb-6 flex flex-col gap-4 shadow-xl">
+              <h2 className="font-display font-semibold text-xl text-on-surface">
+                Add Recipient
+              </h2>
 
-            <div className="flex items-center gap-2 border-b-2 border-primary pb-2">
-              <span className="font-body text-on-surface-variant">@</span>
-              <input
-                ref={(el) => {
-                  el?.focus();
-                }}
-                type="text"
-                placeholder="username"
-                value={recipientInput}
-                onChange={(e) => handleRecipientInputChange(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") addRecipient(recipientInput);
-                  if (e.key === "Escape") closeModal();
-                }}
-                className="flex-1 bg-transparent font-body text-lg text-on-surface outline-none placeholder:text-outline-variant"
-              />
-              {searching && (
-                <svg
-                  className="animate-spin text-primary flex-shrink-0"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                >
-                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-                </svg>
-              )}
-            </div>
-
-            {searchResults.length > 0 && (
-              <div className="flex flex-col gap-1 max-h-40 overflow-y-auto -mx-2">
-                {searchResults.map((r) => (
-                  <button
-                    key={r.id}
-                    onClick={() => addRecipient(r.username)}
-                    className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-surface-container transition-colors text-left"
+              <div className="flex items-center gap-2 border-b-2 border-primary pb-2">
+                <span className="font-body text-on-surface-variant">@</span>
+                <input
+                  ref={(el) => {
+                    el?.focus();
+                  }}
+                  type="text"
+                  placeholder="username"
+                  value={recipientInput}
+                  onChange={(e) => handleRecipientInputChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") addRecipient(recipientInput);
+                    if (e.key === "Escape") closeModal();
+                  }}
+                  className="flex-1 bg-transparent font-body text-lg text-on-surface outline-none placeholder:text-outline-variant"
+                />
+                {searching && (
+                  <svg
+                    className="animate-spin text-primary flex-shrink-0"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
                   >
-                    <div className="w-8 h-8 rounded-full bg-primary-fixed border border-primary flex items-center justify-center text-xs font-display font-semibold text-primary flex-shrink-0">
-                      {r.username.slice(0, 2).toUpperCase()}
-                    </div>
-                    <span className="font-body text-sm text-on-surface">
-                      @{r.username}
-                    </span>
-                  </button>
-                ))}
+                    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                  </svg>
+                )}
               </div>
-            )}
 
-            {recipientInput.trim() &&
-              !searching &&
-              searchResults.length === 0 && (
-                <p className="font-body text-xs text-on-surface-variant text-center">
-                  No users found.
-                </p>
+              {searchResults.length > 0 && (
+                <div className="flex flex-col gap-1 max-h-40 overflow-y-auto -mx-2">
+                  {searchResults.map((r) => (
+                    <button
+                      key={r.id}
+                      onClick={() => addRecipient(r.username)}
+                      className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-surface-container transition-colors text-left"
+                    >
+                      <div className="w-8 h-8 rounded-full bg-primary-fixed border border-primary flex items-center justify-center text-xs font-display font-semibold text-primary flex-shrink-0">
+                        {r.username.slice(0, 2).toUpperCase()}
+                      </div>
+                      <span className="font-body text-sm text-on-surface">
+                        @{r.username}
+                      </span>
+                    </button>
+                  ))}
+                </div>
               )}
 
-            <div className="flex gap-3">
-              <Button variant="ghost" fullWidth onClick={closeModal}>
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                fullWidth
-                onClick={() => addRecipient(recipientInput)}
-                disabled={!canAddRecipient}
-              >
-                Add
-              </Button>
+              {recipientInput.trim() &&
+                !searching &&
+                searchResults.length === 0 && (
+                  <p className="font-body text-xs text-on-surface-variant text-center">
+                    No users found.
+                  </p>
+                )}
+
+              <div className="flex gap-3">
+                <Button variant="ghost" fullWidth onClick={closeModal}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  fullWidth
+                  onClick={() => addRecipient(recipientInput)}
+                  disabled={!canAddRecipient}
+                >
+                  Add
+                </Button>
+              </div>
             </div>
-          </div>
-        </div>,
-        document.body
-      )}
+          </div>,
+          document.body,
+        )}
 
       {/* Session summary overlay */}
-      {summary && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/60" />
-          <div className="relative w-full max-w-sm mx-4 bg-surface rounded-3xl px-6 pt-8 pb-6 flex flex-col gap-5 shadow-2xl">
-            <div className="text-center">
-              <div
-                className={`text-5xl mb-3 font-bold ${summary.outcome === "completed" ? "text-primary" : "text-error"}`}
-              >
-                {summary.outcome === "completed" ? "✓" : "✗"}
+      {summary &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/60" />
+            <div className="relative w-full max-w-sm mx-4 bg-surface rounded-3xl px-6 pt-8 pb-6 flex flex-col gap-5 shadow-2xl">
+              <div className="text-center">
+                <div
+                  className={`text-5xl mb-3 font-bold ${summary.outcome === "completed" ? "text-primary" : "text-error"}`}
+                >
+                  {summary.outcome === "completed" ? "✓" : "✗"}
+                </div>
+                <h2 className="font-display font-bold text-2xl text-on-surface">
+                  {summary.outcome === "completed"
+                    ? "Session Complete"
+                    : "Session Failed"}
+                </h2>
+                <p className="font-body text-sm text-on-surface-variant mt-1">
+                  {summary.reason}
+                </p>
               </div>
-              <h2 className="font-display font-bold text-2xl text-on-surface">
-                {summary.outcome === "completed"
-                  ? "Session Complete"
-                  : "Session Failed"}
-              </h2>
-              <p className="font-body text-sm text-on-surface-variant mt-1">
-                {summary.reason}
-              </p>
-            </div>
 
-            <div className="flex flex-col gap-3 bg-surface-container rounded-2xl px-4 py-4">
-              <SummaryRow
-                label="Time focused"
-                value={`${formatTime(Math.max(0, summary.elapsedSeconds - summary.strikes * 10))} / ${formatTime(summary.totalSeconds)}`}
-              />
-              <SummaryRow
-                label="Distractions"
-                value={String(summary.strikes)}
-              />
-              <SummaryRow
-                label={
-                  summary.outcome === "completed"
-                    ? "Amount kept"
-                    : "Amount lost"
-                }
-                value={`$${(summary.amountCents / 100).toFixed(2)}`}
-                valueClass={
-                  summary.outcome === "completed"
-                    ? "text-primary"
-                    : "text-error"
-                }
-              />
-              {summary.outcome === "failed" && recipients.length > 0 && (
-                <>
-                  <div className="border-t border-outline-variant" />
-                  <div className="flex items-start justify-around gap-2 flex-wrap">
-                    {recipients.map(({ username }, i) => {
-                      const base = Math.floor(
-                        summary.amountCents / recipients.length,
-                      );
-                      const share =
-                        i === recipients.length - 1
-                          ? summary.amountCents - base * (recipients.length - 1)
-                          : base;
-                      return (
-                        <div
-                          key={username}
-                          className="flex flex-col items-center gap-1"
-                        >
-                          <div className="w-10 h-10 rounded-full border-2 border-error bg-error-container flex items-center justify-center text-xs font-display font-semibold text-on-error-container">
-                            {username.slice(0, 2).toUpperCase()}
+              <div className="flex flex-col gap-3 bg-surface-container rounded-2xl px-4 py-4">
+                <SummaryRow
+                  label="Time focused"
+                  value={`${formatTime(Math.max(0, summary.elapsedSeconds - summary.strikes * 10))} / ${formatTime(summary.totalSeconds)}`}
+                />
+                <SummaryRow
+                  label="Distractions"
+                  value={String(summary.strikes)}
+                />
+                <SummaryRow
+                  label={
+                    summary.outcome === "completed"
+                      ? "Amount kept"
+                      : "Amount lost"
+                  }
+                  value={`$${(summary.amountCents / 100).toFixed(2)}`}
+                  valueClass={
+                    summary.outcome === "completed"
+                      ? "text-primary"
+                      : "text-error"
+                  }
+                />
+                {summary.outcome === "failed" && recipients.length > 0 && (
+                  <>
+                    <div className="border-t border-outline-variant" />
+                    <div className="flex items-start justify-around gap-2 flex-wrap">
+                      {recipients.map(({ username }, i) => {
+                        const base = Math.floor(
+                          summary.amountCents / recipients.length,
+                        );
+                        const share =
+                          i === recipients.length - 1
+                            ? summary.amountCents -
+                              base * (recipients.length - 1)
+                            : base;
+                        return (
+                          <div
+                            key={username}
+                            className="flex flex-col items-center gap-1"
+                          >
+                            <div className="w-10 h-10 rounded-full border-2 border-error bg-error-container flex items-center justify-center text-xs font-display font-semibold text-on-error-container">
+                              {username.slice(0, 2).toUpperCase()}
+                            </div>
+                            <span className="font-body text-xs text-on-surface-variant">
+                              @{username}
+                            </span>
+                            <span className="font-display font-semibold text-sm text-error">
+                              ${(share / 100).toFixed(2)}
+                            </span>
                           </div>
-                          <span className="font-body text-xs text-on-surface-variant">
-                            @{username}
-                          </span>
-                          <span className="font-display font-semibold text-sm text-error">
-                            ${(share / 100).toFixed(2)}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-            </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
 
-            <Button variant="primary" fullWidth onClick={dismissSummary}>
-              Done
-            </Button>
-          </div>
-        </div>
-      )}
+              <Button variant="primary" fullWidth onClick={dismissSummary}>
+                Done
+              </Button>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
