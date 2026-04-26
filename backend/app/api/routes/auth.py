@@ -53,9 +53,6 @@ async def discord_login(discord_uid: int, session: SessionDep):
     if user is None:
         raise HTTPException(status_code=404, detail='No Snitch account linked to this Discord user')
 
-    if user.discord_uid is None:
-        raise HTTPException(status_code=400, detail='Discord account is not linked')
-
     if user.stripe_customer_id is None or user.stripe_payment_method_id is None:
         raise HTTPException(
             status_code=400,

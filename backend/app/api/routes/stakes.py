@@ -56,8 +56,8 @@ async def activate_stake(stake_id: int, session: SessionDep, user: CurrentUserDe
 
 @router.get('/{stake_id}/events')
 async def stream_stake_events(stake_id: int, request: Request, session: SessionDep, user: CurrentUserDep):
-    initial = await stake_service.get_stake(session, stake_id, user)
     queue = await stake_events.broker.subscribe(stake_id)
+    initial = await stake_service.get_stake(session, stake_id, user)
 
     async def event_generator():
         try:

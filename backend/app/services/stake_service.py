@@ -273,6 +273,11 @@ async def resolve_stake(session: AsyncSession, stake_id: int, user: User, body: 
     result = await session.exec(select(StakeRecipient).where(StakeRecipient.stake_id == stake.id))
     recipient_rows = result.all()
     per_person = stake.amount_cents // len(recipient_rows) if recipient_rows else 0
+    if per_person < 1:
+        stake.status = StakeStatus.FAILED
+        session.add(stake)
+        await session.commit()
+        raise HTTPException(status_code=400, detail='Stake amount too small to distribute across recipients')
     for r in recipient_rows:
         r.payout_cents = per_person
         session.add(r)
