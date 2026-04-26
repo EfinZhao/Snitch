@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import Button from "../atoms/Button";
 import { apiPost, apiGet, apiPatch, ApiError } from "../../api/client";
 import type { CameraMonitorState } from "../../hooks/useCameraMonitor";
@@ -229,7 +230,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         notifyExtension(false);
         apiPost(
           `/sessions/${session.sessionId}/resolve`,
-          { elapsed_seconds: elapsed },
+          { outcome: "failed", elapsed_seconds: elapsed },
           token,
         ).catch(() => {});
         return;
@@ -239,9 +240,10 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     if (remaining <= 0) {
       localStorage.removeItem(SESSION_KEY);
       localStorage.removeItem(AWAY_KEY);
+      const timerDoneOutcome = session.distractionFractions.length >= MAX_STRIKES ? "failed" : "completed";
       /* eslint-disable react-hooks/set-state-in-effect */
       setSummary({
-        outcome: "completed",
+        outcome: timerDoneOutcome,
         reason: "Timer finished while you were away.",
         amountCents: session.amountCents,
         strikes: session.distractionFractions.length,
@@ -252,7 +254,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
       notifyExtension(false);
       apiPost(
         `/sessions/${session.sessionId}/resolve`,
-        { elapsed_seconds: session.durationSeconds },
+        { outcome: timerDoneOutcome, elapsed_seconds: session.durationSeconds },
         token,
       ).catch(() => {});
       return;
@@ -311,7 +313,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         stopCameraRef.current();
         apiPost(
           `/sessions/${id}/resolve`,
-          { elapsed_seconds: elapsed },
+          { outcome: "failed", elapsed_seconds: elapsed },
           tokenRef.current,
         ).catch(() => {});
       } else {
@@ -872,8 +874,8 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
 
       <div className="flex gap-5 w-full max-w-2xl">
         {/* On the line */}
-        <div className="flex-1 bg-white/90 rounded-2xl border border-outline-variant p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
+        <div className="flex-1 bg-white/90 rounded-2xl border border-outline-variant p-5 shadow-sm flex flex-col h-44">
+          <div className="flex items-center justify-between mb-3 flex-shrink-0">
             <span className="font-body text-sm text-on-surface-variant font-medium">
               On the line
             </span>
@@ -893,36 +895,38 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
               </svg>
             </div>
           </div>
-          {editingAmount && !running ? (
-            <div className="flex items-center tabular-nums mb-1">
-              <span className="font-display font-bold text-3xl text-primary">$</span>
-              <input
-                ref={(el) => el?.focus()}
-                type="text"
-                inputMode="decimal"
-                value={amountInput}
-                placeholder="0.00"
-                onChange={(e) =>
-                  setAmountInput(e.target.value.replace(/[^\d.]/g, ""))
-                }
-                onBlur={() => commitAmount(amountInput)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") commitAmount(amountInput);
-                  if (e.key === "Escape") setEditingAmount(false);
-                }}
-                className="w-28 font-display font-bold text-3xl text-primary tabular-nums bg-transparent outline-none border-b-2 border-primary"
-              />
-            </div>
-          ) : (
-            <button
-              onClick={() => !running && startEditingAmount()}
-              disabled={running}
-              className="p-0 font-display font-bold text-3xl text-primary tabular-nums mb-1 disabled:cursor-default hover:text-primary-container transition-colors leading-none"
-            >
-              ${amount || "0.00"}
-            </button>
-          )}
-          <div className="mt-3 pt-3 border-t border-outline-variant">
+          <div className="flex-1 flex items-start">
+            {editingAmount && !running ? (
+              <div className="flex items-center tabular-nums">
+                <span className="font-display font-bold text-3xl text-primary">$</span>
+                <input
+                  ref={(el) => el?.focus()}
+                  type="text"
+                  inputMode="decimal"
+                  value={amountInput}
+                  placeholder="0.00"
+                  onChange={(e) =>
+                    setAmountInput(e.target.value.replace(/[^\d.]/g, ""))
+                  }
+                  onBlur={() => commitAmount(amountInput)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitAmount(amountInput);
+                    if (e.key === "Escape") setEditingAmount(false);
+                  }}
+                  className="w-28 font-display font-bold text-3xl text-primary tabular-nums bg-transparent outline-none border-b-2 border-primary"
+                />
+              </div>
+            ) : (
+              <button
+                onClick={() => !running && startEditingAmount()}
+                disabled={running}
+                className="p-0 font-display font-bold text-3xl text-primary tabular-nums disabled:cursor-default hover:text-primary-container transition-colors leading-none"
+              >
+                ${amount || "0.00"}
+              </button>
+            )}
+          </div>
+          <div className="pt-3 border-t border-outline-variant flex-shrink-0">
             {running ? (
               <p className="font-body text-xs text-on-surface-variant">
                 Stake increases as you complete goals
@@ -936,8 +940,8 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
         </div>
 
         {/* Doubters */}
-        <div className="flex-1 bg-white/90 rounded-2xl border border-outline-variant p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
+        <div className="flex-1 bg-white/90 rounded-2xl border border-outline-variant p-5 shadow-sm flex flex-col h-44">
+          <div className="flex items-center justify-between mb-3 flex-shrink-0">
             <span className="font-body text-sm text-on-surface-variant font-medium">
               Doubters
             </span>
@@ -965,56 +969,58 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
               </button>
             )}
           </div>
-          <div className="flex items-center gap-2 flex-wrap mb-1 leading-none">
-            {recipients.map(({ username }, i) => {
-              const sessionFailed =
-                running && distractions.length >= MAX_STRIKES;
-              const base = Math.floor(amountCents / recipients.length);
-              const share =
-                i === recipients.length - 1
-                  ? amountCents - base * (recipients.length - 1)
-                  : base;
-              return (
-                <div
-                  key={username}
-                  className="flex flex-col items-center gap-0.5"
-                >
-                  <button
-                    onClick={() => {
-                      if (!running) removeRecipient(username);
-                    }}
-                    title={
-                      running
-                        ? `@${username}`
-                        : `@${username} — click to remove`
-                    }
-                    className={[
-                      "w-9 h-9 rounded-full border-2 flex items-center justify-center text-xs font-display font-semibold transition-colors duration-300",
-                      sessionFailed
-                        ? "border-error bg-error-container text-on-error-container"
-                        : "border-primary bg-primary-fixed text-primary",
-                    ].join(" ")}
+          <div className="flex-1 overflow-y-auto">
+            <div className="flex items-start gap-2 flex-wrap leading-none">
+              {recipients.map(({ username }, i) => {
+                const sessionFailed =
+                  running && distractions.length >= MAX_STRIKES;
+                const base = Math.floor(amountCents / recipients.length);
+                const share =
+                  i === recipients.length - 1
+                    ? amountCents - base * (recipients.length - 1)
+                    : base;
+                return (
+                  <div
+                    key={username}
+                    className="flex flex-col items-center gap-0.5"
                   >
-                    {username.slice(0, 2).toUpperCase()}
-                  </button>
-                  {running && sessionFailed && (
-                    <span className="font-display font-semibold text-[10px] tabular-nums text-error">
-                      ${(share / 100).toFixed(2)}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-            {!running && (
-              <button
-                onClick={openModal}
-                className="w-9 h-9 rounded-full border-2 border-dashed border-outline-variant flex items-center justify-center text-on-surface-variant hover:border-primary hover:text-primary transition-colors"
-              >
-                +
-              </button>
-            )}
+                    <button
+                      onClick={() => {
+                        if (!running) removeRecipient(username);
+                      }}
+                      title={
+                        running
+                          ? `@${username}`
+                          : `@${username} — click to remove`
+                      }
+                      className={[
+                        "w-9 h-9 rounded-full border-2 flex items-center justify-center text-xs font-display font-semibold transition-colors duration-300",
+                        sessionFailed
+                          ? "border-error bg-error-container text-on-error-container"
+                          : "border-primary bg-primary-fixed text-primary",
+                      ].join(" ")}
+                    >
+                      {username.slice(0, 2).toUpperCase()}
+                    </button>
+                    {running && sessionFailed && (
+                      <span className="font-display font-semibold text-[10px] tabular-nums text-error">
+                        ${(share / 100).toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+              {!running && (
+                <button
+                  onClick={openModal}
+                  className="w-9 h-9 rounded-full border-2 border-dashed border-outline-variant flex items-center justify-center text-on-surface-variant hover:border-primary hover:text-primary transition-colors"
+                >
+                  +
+                </button>
+              )}
+            </div>
           </div>
-          <div className="mt-3 pt-3 border-t border-outline-variant">
+          <div className="pt-3 border-t border-outline-variant flex-shrink-0">
             <p className="font-body text-xs text-on-surface-variant">
               {recipients.length === 0
                 ? "Add people to hold you accountable"
@@ -1063,7 +1069,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
       )}
 
       {/* Add recipient modal */}
-      {showModal && (
+      {showModal && createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center"
           onClick={(e) => {
@@ -1149,7 +1155,8 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
               </Button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Session summary overlay */}

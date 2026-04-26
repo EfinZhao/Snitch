@@ -82,6 +82,7 @@ class SessionUpdate(BaseModel):
 
 class SessionResolve(BaseModel):
     elapsed_seconds: int
+    outcome: SessionOutcome | None = None
 
 
 class SessionRecipientRead(BaseModel):

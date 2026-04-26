@@ -97,13 +97,17 @@ async function classifyUrl(domain) {
   }
 
   const prompt =
-    `You are a strict focus session monitor. Using only your prior knowledge of the website "${domain}", ` +
+    `You are a focus session monitor. Using only your prior knowledge of the website "${domain}", ` +
     `decide if it is a distraction from productive work.\n\n` +
-    `Block (YES): social media, video/music streaming, online games, browser games, entertainment, forums, shopping, news.\n` +
-    `Allow (NO): documentation, coding tools, academic resources, productivity tools, work software.\n` +
-    `Do NOT consider page content — judge the site by what it is known to be.\n` +
-    `When unsure, answer YES.\n\n` +
-    `Explain your reasoning in 1-2 sentences, then end your response with FINAL_ANSWER={YES} or FINAL_ANSWER={NO}.`;
+    `Block (YES): social media (Twitter/X, Instagram, TikTok, Facebook, Reddit), ` +
+    `video/music streaming (YouTube, Netflix, Twitch, Spotify), online games, browser games, ` +
+    `entertainment sites, gossip/tabloid news, shopping (Amazon, eBay).\n` +
+    `Allow (NO): documentation, coding tools, GitHub, Stack Overflow, academic resources, ` +
+    `productivity tools, work software, cloud consoles, email, search engines, news sites focused on tech/finance, ` +
+    `any site you are not confident is primarily used for entertainment or leisure.\n` +
+    `Do NOT consider page content — judge the site by what it is primarily known to be.\n` +
+    `When unsure, answer NO. Only block sites you are highly confident are distractions.\n\n` +
+    `Explain your reasoning in 1 sentence, then end your response with FINAL_ANSWER={YES} or FINAL_ANSWER={NO}.`;
 
   if (!GEMINI_API_KEY) {
     console.error("[Snitch classify] GEMINI_API_KEY is not set — config.js may not have loaded");
@@ -114,16 +118,15 @@ async function classifyUrl(domain) {
 
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite-preview:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
-            maxOutputTokens: 500,
+            maxOutputTokens: 200,
             temperature: 0,
-            thinkingConfig: { thinkingBudget: 0 },
           },
         }),
       }

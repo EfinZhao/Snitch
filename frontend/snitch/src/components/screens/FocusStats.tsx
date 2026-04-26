@@ -299,6 +299,11 @@ export default function FocusStats({ navigate, token }: Props) {
                               <Chip variant="default">In progress</Chip>
                             </div>
                           )}
+                          {isCompleted && s.recipients.length > 0 && (
+                            <p className="font-body text-xs text-primary mt-0.5 italic">
+                              You proved {s.recipients.map(r => `@${r.recipient_username}`).join(', ')} wrong!
+                            </p>
+                          )}
                         </>
                       )}
                     </div>

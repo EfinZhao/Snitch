@@ -21,6 +21,7 @@ from app.schemas.session import (
     ClassifyResponse,
     DistractionReport,
     SessionCreate,
+    SessionOutcome,
     SessionRecipientAdd,
     SessionRead,
     SessionRecipientRead,
@@ -353,7 +354,8 @@ async def resolve_session(
     focus_session.resolved_at = datetime.now(UTC)
     focus_session.elapsed_seconds = body.elapsed_seconds
 
-    if focus_session.distraction_count < STRIKE_THRESHOLD:
+    force_failed = body.outcome == SessionOutcome.FAILED
+    if not force_failed and focus_session.distraction_count < STRIKE_THRESHOLD:
         result = await db_session.exec(
             select(SessionRecipient).where(
                 SessionRecipient.session_id == focus_session.id
