@@ -644,6 +644,52 @@ class General(commands.Cog, name='general'):
             return None
         return AuthActionView(signup_url=signup_url, payment_url=payment_url)
 
+    async def _wait_for_view_or_cancel(
+        self,
+        context: Context,
+        prompt_message: discord.Message,
+        view: discord.ui.View,
+    ) -> bool:
+        """Wait for a view to finish, but allow the creator to type `cancel` at any time."""
+
+        def check(message: discord.Message) -> bool:
+            return message.author.id == context.author.id and message.channel.id == context.channel.id
+
+        view_task = asyncio.create_task(view.wait())
+        try:
+            while True:
+                msg_task = asyncio.create_task(self.bot.wait_for('message', check=check))
+                done, _ = await asyncio.wait({view_task, msg_task}, return_when=asyncio.FIRST_COMPLETED)
+
+                if view_task in done:
+                    msg_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await msg_task
+                    return False
+
+                message = msg_task.result()
+                if message.content.strip().lower() != 'cancel':
+                    continue
+
+                try:
+                    await message.delete()
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+                for child in view.children:
+                    child.disabled = True
+                view.stop()
+                await prompt_message.edit(
+                    embed=make_snitch_embed('Session creation cancelled.', is_error=True),
+                    view=view,
+                )
+                return True
+        finally:
+            if not view_task.done():
+                view_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await view_task
+
     async def _prompt_for_text(
         self,
         context: Context,
@@ -665,6 +711,12 @@ class General(commands.Cog, name='general'):
                     await message.delete()
                 except (discord.Forbidden, discord.HTTPException):
                     pass
+            if content.strip().lower() == 'cancel':
+                await prompt_message.edit(
+                    embed=make_snitch_embed('Session creation cancelled.', is_error=True),
+                    view=None,
+                )
+                return None
             return content
         except asyncio.TimeoutError:
             await prompt_message.edit(
@@ -707,11 +759,14 @@ class General(commands.Cog, name='general'):
             embed=make_snitch_embed(
                 "Who's doubting you?\n"
                 '- **Tag Them Now**: lock in your doubters before the session starts.\n'
-                '- **Open to Anyone**: let people join as doubters while you study.'
+                '- **Open to Anyone**: let people join as doubters while you study.\n\n'
+                'Type `cancel` at any time before the session starts to abort creation.'
             ),
             view=recipient_mode_view,
         )
-        await recipient_mode_view.wait()
+        cancelled = await self._wait_for_view_or_cancel(context, prompt_message, recipient_mode_view)
+        if cancelled:
+            return
         if recipient_mode_view.mode is None:
             await prompt_message.edit(
                 embed=make_snitch_embed(
@@ -725,31 +780,120 @@ class General(commands.Cog, name='general'):
         max_recipients: Optional[int] = None
         if recipient_mode_view.mode == 'mention':
             await prompt_message.edit(
-                embed=make_snitch_embed('Tag your doubters — mention them all in one message (e.g. `@alice @bob`).'),
+                embed=make_snitch_embed(
+                    'Tag your doubters — mention them in one message (e.g. `@alice @bob`).\n'
+                    'Type `cancel` to abort.\n'
+                ),
                 view=None,
             )
 
             def mention_check(message: discord.Message) -> bool:
                 return message.author.id == context.author.id and message.channel.id == context.channel.id
 
-            try:
-                mention_message = await self.bot.wait_for('message', timeout=180, check=mention_check)
-            except asyncio.TimeoutError:
+            seen_ids: set[int] = set()
+            while True:
+                try:
+                    mention_message = await self.bot.wait_for('message', timeout=180, check=mention_check)
+                except asyncio.TimeoutError:
+                    await prompt_message.edit(
+                        embed=make_snitch_embed(
+                            "Took too long. Run `/session` again when you've got your doubters ready.",
+                            is_error=True,
+                        ),
+                        view=None,
+                    )
+                    return
+
+                raw_input = mention_message.content.strip().lower()
+                try:
+                    await mention_message.delete()
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+                if raw_input == 'cancel':
+                    await prompt_message.edit(
+                        embed=make_snitch_embed('Session creation cancelled.', is_error=True),
+                        view=None,
+                    )
+                    return
+
+                if raw_input == 'skip':
+                    if recipients:
+                        break
+                    await prompt_message.edit(
+                        embed=make_snitch_embed(
+                            'You need at least one valid doubter before you can skip. Mention someone with a Snitch account.',
+                            is_error=True,
+                        ),
+                        view=None,
+                    )
+                    continue
+
+                if not mention_message.mentions:
+                    await prompt_message.edit(
+                        embed=make_snitch_embed(
+                            'No mentions found. Mention at least one user, or type `skip` if you already added someone.',
+                            is_error=True,
+                        ),
+                        view=None,
+                    )
+                    continue
+
+                added_now: list[discord.abc.User] = []
+                missing_accounts: list[str] = []
+                verification_errors: list[str] = []
+
+                for member in mention_message.mentions:
+                    if member.bot or member.id == context.author.id or member.id in seen_ids:
+                        continue
+
+                    status_ok, status_msg, status = await self.auth_client.get_discord_account_status(member.id)
+                    if not status_ok or status is None:
+                        verification_errors.append(f'{member.mention} ({status_msg or "status check failed"})')
+                        continue
+                    if not bool(status.get('exists')):
+                        missing_accounts.append(member.mention)
+                        continue
+
+                    seen_ids.add(member.id)
+                    recipients.append(member)
+                    added_now.append(member)
+
+                if missing_accounts or verification_errors:
+                    details: list[str] = []
+                    if added_now:
+                        details.append(f"Added: {' '.join(user.mention for user in added_now)}")
+                    if missing_accounts:
+                        details.append(
+                            'No linked Snitch account: ' + ', '.join(missing_accounts)
+                        )
+                    if verification_errors:
+                        details.append('Could not verify: ' + '; '.join(verification_errors))
+
+                    skip_line = (
+                        'Type `skip` to continue, or mention more users.'
+                        if recipients
+                        else 'Mention new users with linked Snitch accounts.'
+                    )
+                    await prompt_message.edit(
+                        embed=make_snitch_embed(
+                            '\n'.join(details + [skip_line]),
+                            is_error=True,
+                        ),
+                        view=None,
+                    )
+                    continue
+
+                if added_now:
+                    break
+
                 await prompt_message.edit(
                     embed=make_snitch_embed(
-                        "Took too long. Run `/session` again when you've got your doubters ready.",
+                        'No new valid doubters were added. Mention different users, or type `skip` if you already added someone.',
                         is_error=True,
                     ),
                     view=None,
                 )
-                return
-
-            seen_ids: set[int] = set()
-            for member in mention_message.mentions:
-                if member.bot or member.id == context.author.id or member.id in seen_ids:
-                    continue
-                seen_ids.add(member.id)
-                recipients.append(member)
 
             if not recipients:
                 await prompt_message.edit(
@@ -858,7 +1002,9 @@ class General(commands.Cog, name='general'):
                 ),
                 view=lobby_view,
             )
-            await lobby_view.wait()
+            cancelled = await self._wait_for_view_or_cancel(context, prompt_message, lobby_view)
+            if cancelled:
+                return
 
             if not lobby_view.started:
                 await prompt_message.edit(
