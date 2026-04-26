@@ -108,19 +108,10 @@ export default function DistractionMonitor({
 
   return (
     <div className="flex flex-col px-5 py-5 gap-4">
-      <div>
-        <h1 className="font-display font-semibold text-4xl text-on-surface leading-tight">
-          Focus Monitor
-        </h1>
-        <p className="font-body italic text-sm text-on-surface-variant mt-1 leading-snug">
-          "I'm watching. Don't touch your phone."
-        </p>
-      </div>
-
       {/* Camera feed */}
       <div
         className={[
-          'relative w-full lg:max-w-[55%] lg:mx-auto rounded-lg overflow-hidden bg-surface-container border-2 transition-colors',
+          'relative w-full lg:max-w-[45%] lg:mx-auto rounded-lg overflow-hidden bg-surface-container border-2 transition-colors',
           borderColor,
         ].join(' ')}
         style={{ aspectRatio: '4/3' }}
@@ -213,7 +204,7 @@ export default function DistractionMonitor({
         )}
       </div>
 
-      <div className="flex flex-col gap-4 w-full lg:max-w-[55%] lg:mx-auto">
+      <div className="flex flex-col gap-4 w-full lg:max-w-[45%] lg:mx-auto">
         {/* Status + strikes */}
         <div className="flex items-center justify-between">
           <Chip variant={statusVariant}>{statusLabel}</Chip>
@@ -252,7 +243,7 @@ export default function DistractionMonitor({
 
       {/* Event log */}
       {events.length > 0 && (
-        <div>
+        <div className = "w-full lg:max-w-[45%] lg:mx-auto">
           <h2 className="font-display font-semibold text-base text-on-surface mb-2">
             Recent Detections
           </h2>
@@ -276,30 +267,6 @@ export default function DistractionMonitor({
               ))}
             </div>
           </Card>
-        </div>
-      )}
-
-      {/* Dev buttons */}
-      {import.meta.env.DEV && (
-        <div className="flex gap-2">
-          <button
-            onClick={() => handleWarning('phone_detected')}
-            className="flex-1 text-xs text-on-surface-variant border border-outline-variant rounded px-2 py-1 opacity-60 hover:opacity-100 transition-opacity"
-          >
-            [dev] warn
-          </button>
-          <button
-            onClick={() => handleStrike('phone_detected')}
-            className="flex-1 text-xs text-error border border-error rounded px-2 py-1 opacity-60 hover:opacity-100 transition-opacity"
-          >
-            [dev] strike
-          </button>
-          <button
-            onClick={() => startBreak(2 * 60_000, 'break' as BreakReason)}
-            className="flex-1 text-xs text-primary border border-primary rounded px-2 py-1 opacity-60 hover:opacity-100 transition-opacity"
-          >
-            [dev] break
-          </button>
         </div>
       )}
     </div>

@@ -5,9 +5,10 @@ import type { CameraMonitorState } from "../../hooks/useCameraMonitor";
 import type { Screen, UserProfile, SessionRead } from "../../types";
 
 const DEFAULT_SECONDS = 25 * 60;
-const CX = 160,
-  CY = 160,
-  R = 148;
+const CIRCLE_SIZE = 320; // change this to resize the entire timer circle
+const CX = CIRCLE_SIZE / 2;
+const CY = CIRCLE_SIZE / 2;
+const R = CIRCLE_SIZE / 2 - 12;
 
 // Both paths use 15 identical cubic-bezier commands so SMIL <animate d> can interpolate.
 // 15 segments: θ = 2π/15 per segment, bezier constant k = (4/3)·tan(θ/4) = (4/3)·tan(π/30)
@@ -28,26 +29,6 @@ const CIRCLE_PATH = (() => {
       y1 = y0 + _bk * R * Math.cos(a0);
     const x2 = x3 + _bk * R * Math.sin(a1),
       y2 = y3 - _bk * R * Math.cos(a1);
-    d +=
-      (i === 0 ? `M${_pf(x0)},${_pf(y0)} ` : "") +
-      `C${_pf(x1)},${_pf(y1)} ${_pf(x2)},${_pf(y2)} ${_pf(x3)},${_pf(y3)} `;
-  }
-  return d + "Z";
-})();
-const POLYGON_PATH = (() => {
-  let d = "";
-  for (let i = 0; i < _N; i++) {
-    const a0 = i * _STEP,
-      a1 = a0 + _STEP;
-    const x0 = CX + R * Math.cos(a0),
-      y0 = CY + R * Math.sin(a0);
-    const x3 = CX + R * Math.cos(a1),
-      y3 = CY + R * Math.sin(a1);
-    // Straight line via cubic bezier: control points at ⅓ and ⅔ along the segment
-    const x1 = x0 + (x3 - x0) / 3,
-      y1 = y0 + (y3 - y0) / 3;
-    const x2 = x0 + (2 * (x3 - x0)) / 3,
-      y2 = y0 + (2 * (y3 - y0)) / 3;
     d +=
       (i === 0 ? `M${_pf(x0)},${_pf(y0)} ` : "") +
       `C${_pf(x1)},${_pf(y1)} ${_pf(x2)},${_pf(y2)} ${_pf(x3)},${_pf(y3)} `;
@@ -149,6 +130,11 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
 
   const [distractions, setDistractions] = useState<number[]>([]);
   const [amountCents, setAmountCents] = useState(0);
+  const [ringBounceKey, setRingBounceKey] = useState(0);
+
+  // Amount inline editing
+  const [editingAmount, setEditingAmount] = useState(false);
+  const [amountInput, setAmountInput] = useState("");
 
   // Sessions / session
   const [amount, setAmount] = useState("");
@@ -365,11 +351,17 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
 
   const currentStatus = cameraMonitor.currentStatus;
   const isTimerActive = running || pendingRun;
+
+  const prevIsTimerActiveRef = useRef(false);
+  useEffect(() => {
+    if (isTimerActive && !prevIsTimerActiveRef.current) {
+      setRingBounceKey((k) => k + 1);
+    }
+    prevIsTimerActiveRef.current = isTimerActive;
+  }, [isTimerActive]);
   const isWarning =
     running && currentStatus === "warning" && distractions.length < MAX_STRIKES;
-  const isDistracted =
-    running &&
-    (currentStatus === "distracted" || distractions.length >= MAX_STRIKES);
+  const isDistracted = running && currentStatus === "distracted";
 
   // ── Watch camera events for new distraction arc marks ──────────────────
   const lastProcessedEventIdRef = useRef(-1);
@@ -670,6 +662,17 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
     }
   }
 
+  function startEditingAmount() {
+    setAmountInput(amount);
+    setEditingAmount(true);
+  }
+
+  function commitAmount(val: string) {
+    const num = parseFloat(val);
+    if (!isNaN(num) && num >= 0) setAmount(num.toFixed(2));
+    setEditingAmount(false);
+  }
+
   function dismissSummary() {
     stopCameraRef.current();
     setSummary(null);
@@ -707,12 +710,13 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
       <div className="relative flex items-center justify-center mt-2">
         <div
           className="absolute rounded-full border-2 border-dashed border-outline-variant opacity-40"
-          style={{ width: "348px", height: "348px" }}
+          style={{ width: CIRCLE_SIZE + 28, height: CIRCLE_SIZE + 28 }}
         />
+        <div key={ringBounceKey} className={ringBounceKey > 0 ? "animate-ring-pop absolute" : "absolute"}>
         <svg
-          width="320"
-          height="320"
-          className="absolute pointer-events-none"
+          width={CIRCLE_SIZE}
+          height={CIRCLE_SIZE}
+          className="pointer-events-none"
           style={{ transform: "rotate(-90deg) scaleX(1)", overflow: "visible" }}
         >
           {/* Background track */}
@@ -747,32 +751,24 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
             }}
           />
 
-          {/* Hexagon ↔ circle morph — fades in when distracted */}
-          <path
-            d={CIRCLE_PATH}
+          {/* Heartbeat arc — fades in when distracted */}
+          <circle
+            cx={CX}
+            cy={CY}
+            r={R}
             fill="none"
             stroke="#ef4444"
             strokeWidth={arcStrokeWidth}
-            strokeLinejoin="miter"
-            pathLength={1000}
-            strokeDasharray={1000}
-            strokeDashoffset={elapsed * 1000}
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={elapsed * circumference}
             style={{
               transition:
                 "opacity 0.35s ease, stroke-width 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)",
               opacity: isDistracted ? 1 : 0,
+              animation: isDistracted ? "heartbeat 2s ease-in-out infinite" : "none",
             }}
-          >
-            <animate
-              attributeName="d"
-              values={`${CIRCLE_PATH};${POLYGON_PATH};${CIRCLE_PATH}`}
-              dur="3s"
-              repeatCount="indefinite"
-              calcMode="spline"
-              keyTimes="0;0.5;1"
-              keySplines="0.45 0 0.55 1;0.45 0 0.55 1"
-            />
-          </path>
+          />
 
           {distractions.map((fraction, i) => {
             const pt = fractionToPoint(fraction);
@@ -785,10 +781,11 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
             );
           })}
         </svg>
+        </div>
 
         <div
           className="flex flex-col items-center justify-center rounded-full bg-white shadow-lg relative z-10"
-          style={{ width: "272px", height: "272px" }}
+          style={{ width: CIRCLE_SIZE - 48, height: CIRCLE_SIZE - 48 }}
         >
           {editing ? (
             <input
@@ -811,7 +808,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
               onClick={startEditing}
               disabled={running}
               className={[
-                "font-display font-semibold text-5xl tabular-nums disabled:cursor-default transition-colors duration-300",
+                "font-display font-semibold text-5xl tabular-nums disabled:cursor-default transition-colors duration-300 hover:text-primary-container",
                 running &&
                 (distractions.length >= MAX_STRIKES ||
                   currentStatus === "distracted")
@@ -839,8 +836,8 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
 
         {/* Warning glow — separate top-layer SVG so nothing clips the bloom */}
         <svg
-          width="320"
-          height="320"
+          width={CIRCLE_SIZE}
+          height={CIRCLE_SIZE}
           className="absolute pointer-events-none"
           style={{
             transform: "rotate(-90deg) scaleX(1)",
@@ -896,32 +893,46 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
               </svg>
             </div>
           </div>
-          <div className="font-display font-bold text-3xl text-on-surface tabular-nums mb-1">
-            ${amount || "0.00"}
-          </div>
-          {!running ? (
-            <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-outline-variant">
-              <span className="font-body text-on-surface-variant text-xs">
-                $
-              </span>
+          {editingAmount && !running ? (
+            <div className="flex items-center tabular-nums mb-1">
+              <span className="font-display font-bold text-3xl text-primary">$</span>
               <input
-                type="number"
-                min="0"
-                step="0.01"
+                ref={(el) => el?.focus()}
+                type="text"
+                inputMode="decimal"
+                value={amountInput}
                 placeholder="0.00"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                className="bg-transparent font-body text-sm text-on-surface w-20 outline-none placeholder:text-outline-variant tabular-nums"
+                onChange={(e) =>
+                  setAmountInput(e.target.value.replace(/[^\d.]/g, ""))
+                }
+                onBlur={() => commitAmount(amountInput)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitAmount(amountInput);
+                  if (e.key === "Escape") setEditingAmount(false);
+                }}
+                className="w-28 font-display font-bold text-3xl text-primary tabular-nums bg-transparent outline-none border-b-2 border-primary"
               />
-              <span className="font-body text-xs text-on-surface-variant">
-                on the line
-              </span>
             </div>
           ) : (
-            <p className="font-body text-xs text-on-surface-variant">
-              Stake increases as you complete goals
-            </p>
+            <button
+              onClick={() => !running && startEditingAmount()}
+              disabled={running}
+              className="p-0 font-display font-bold text-3xl text-primary tabular-nums mb-1 disabled:cursor-default hover:text-primary-container transition-colors leading-none"
+            >
+              ${amount || "0.00"}
+            </button>
           )}
+          <div className="mt-3 pt-3 border-t border-outline-variant">
+            {running ? (
+              <p className="font-body text-xs text-on-surface-variant">
+                Stake increases as you complete goals
+              </p>
+            ) : (
+              <p className="font-body text-xs text-on-surface-variant">
+                Will it be lost to your friends?
+              </p>
+            )}
+          </div>
         </div>
 
         {/* Doubters */}
@@ -954,7 +965,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
               </button>
             )}
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap mb-1 leading-none">
             {recipients.map(({ username }, i) => {
               const sessionFailed =
                 running && distractions.length >= MAX_STRIKES;
@@ -978,7 +989,7 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
                         : `@${username} — click to remove`
                     }
                     className={[
-                      "w-10 h-10 rounded-full border-2 flex items-center justify-center text-xs font-display font-semibold transition-colors duration-300",
+                      "w-9 h-9 rounded-full border-2 flex items-center justify-center text-xs font-display font-semibold transition-colors duration-300",
                       sessionFailed
                         ? "border-error bg-error-container text-on-error-container"
                         : "border-primary bg-primary-fixed text-primary",
@@ -997,17 +1008,19 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
             {!running && (
               <button
                 onClick={openModal}
-                className="w-10 h-10 rounded-full border-2 border-dashed border-outline-variant flex items-center justify-center text-on-surface-variant hover:border-primary hover:text-primary transition-colors"
+                className="w-9 h-9 rounded-full border-2 border-dashed border-outline-variant flex items-center justify-center text-on-surface-variant hover:border-primary hover:text-primary transition-colors"
               >
                 +
               </button>
             )}
           </div>
-          <p className="font-body text-xs text-on-surface-variant mt-3">
-            {recipients.length === 0
-              ? "Add people to hold you accountable"
-              : `${recipients.length} ${recipients.length === 1 ? "person" : "people"} waiting for you to fail`}
-          </p>
+          <div className="mt-3 pt-3 border-t border-outline-variant">
+            <p className="font-body text-xs text-on-surface-variant">
+              {recipients.length === 0
+                ? "Add people to hold you accountable"
+                : `${recipients.length} ${recipients.length === 1 ? "person" : "people"} waiting for you to fail`}
+            </p>
+          </div>
         </div>
       </div>
 
@@ -1048,21 +1061,6 @@ export default function FocusDashboard({ token, user, cameraMonitor }: Props) {
           {locking ? "Starting…" : "Lock In"}
         </Button>
       )}
-
-      {import.meta.env.DEV && running && (
-        <button
-          onClick={() => {
-            addArcMark();
-          }}
-          className="text-xs text-error border border-error rounded px-3 py-1 opacity-60 hover:opacity-100 transition-opacity"
-        >
-          [dev] distracted
-        </button>
-      )}
-
-      <p className="font-body text-xs text-on-surface-variant opacity-50 pb-2">
-        Snitch Engine v1.0 • Active Monitoring {running ? "Enabled" : "Standby"}
-      </p>
 
       {/* Add recipient modal */}
       {showModal && (

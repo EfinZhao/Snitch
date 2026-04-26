@@ -68,6 +68,7 @@ export default function FocusStats({ navigate, token }: Props) {
     .reduce((acc, s) => acc + s.amount_cents, 0)
 
   const streak = computeStreak(mySessions)
+  void streak // displayed in UI below
   const recentSessions = mySessions.slice(0, 10)
 
   // Weekly bar chart (last 7 days)
@@ -154,27 +155,6 @@ export default function FocusStats({ navigate, token }: Props) {
             </p>
           </div>
           <span className="text-2xl">{lost > 0 ? '⚠️' : '🎯'}</span>
-        </div>
-      </Card>
-
-      {/* Streak */}
-      <Card accent="info">
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="font-body text-xs text-primary tracking-wide uppercase font-semibold">
-              Current Streak
-            </p>
-            <p className="font-display font-semibold text-3xl text-on-surface mt-0.5">
-              {streak}{' '}
-              <span className="text-sm font-body font-normal text-on-surface-variant">
-                {streak === 1 ? 'day' : 'days'} without distractions
-              </span>
-            </p>
-            <p className="font-body text-xs text-on-surface-variant mt-2">
-              {streak > 0 ? "Don't break it now." : 'Complete a session today to start one.'}
-            </p>
-          </div>
-          <span className="text-2xl">🔥</span>
         </div>
       </Card>
 

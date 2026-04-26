@@ -345,6 +345,24 @@ body::-webkit-scrollbar-thumb {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes heartbeat {
+  0%      { opacity: 1; }
+  8%      { opacity: 1; }
+  8.001%  { opacity: 0; }
+  18%     { opacity: 0; }
+  18.001% { opacity: 1; }
+  30%     { opacity: 1; }
+  30.001% { opacity: 0; }
+  44%     { opacity: 0; }
+  44.001% { opacity: 1; }
+  100%    { opacity: 1; }
+}
+
+.arc-heartbeat {
+  animation: heartbeat 2s ease-in-out infinite;
+  stroke: #ef4444 !important;
+}
+
 
 /* ─── Footer ─── */
 .footer {

@@ -131,6 +131,20 @@ body {
   );
 }
 
+/* Dot-matrix backgrounds */
+.app-bg {
+  background-image:
+    radial-gradient(circle, rgba(51, 95, 135, 0.09) 1.5px, transparent 1.5px),
+    linear-gradient(to bottom right, #f0f4f9, #e8f0f9);
+  background-size: 45px 45px, 100% 100%;
+}
+
+.surface-dot-bg {
+  background-color: var(--color-surface);
+  background-image: radial-gradient(circle, rgba(51, 95, 135, 0.06) 1.5px, transparent 1.5px);
+  background-size: 45px 45px;
+}
+
 /* Mobile frame constraint */
 .mobile-frame {
   max-width: 390px;
@@ -139,8 +153,71 @@ body {
   background: var(--color-background);
 }
 
+/* Distraction heartbeat — lub-dub then hold */
+@keyframes heartbeat {
+  0%          { opacity: 1; }
+  8%          { opacity: 1; }
+  8.001%      { opacity: 0; }
+  18%         { opacity: 0; }
+  18.001%     { opacity: 1; }
+  30%         { opacity: 1; }
+  30.001%     { opacity: 0; }
+  44%         { opacity: 0; }
+  44.001%     { opacity: 1; }
+  100%        { opacity: 1; }
+}
+
+/* Ring pop bounce when session starts */
+@keyframes ringPop {
+  0%   { transform: scale(1); }
+  45%  { transform: scale(1.01); }
+  75%  { transform: scale(0.98); }
+  100% { transform: scale(1); }
+}
+
+.animate-ring-pop {
+  animation: ringPop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
 /* Warning glow flicker on the timer arc */
 @keyframes warningFlicker {
   0%, 100% { opacity: 0.75; }
   50% { opacity: 0.08; }
+}
+
+/* Page / step enter transitions */
+@keyframes pageEnter {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pageEnterLeft {
+  from { opacity: 0; transform: translateX(-18px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pageEnterRight {
+  from { opacity: 0; transform: translateX(18px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.animate-page-enter {
+  animation: pageEnter 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.animate-page-enter-left {
+  animation: pageEnterLeft 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.animate-page-enter-right {
+  animation: pageEnterRight 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
 }

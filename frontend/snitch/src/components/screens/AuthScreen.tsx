@@ -134,7 +134,7 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   // ── Card step ─────────────────────────────────────────────────────────────
   if (step === "card") {
     return (
-      <div className="flex flex-col flex-1 overflow-y-auto">
+      <div key="card" className="flex flex-col flex-1 overflow-y-auto animate-page-enter-right">
         <div className="flex-1 flex flex-col items-center justify-end pb-7 px-6 gap-1">
           <h1 className="font-display font-semibold text-5xl text-primary italic tracking-tight select-none">
             Snitch
@@ -169,7 +169,7 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   // ── Redirecting to Stripe Connect onboarding ──────────────────────────────
   if (step === "redirecting") {
     return (
-      <div className="flex flex-col items-center justify-center flex-1 gap-4 px-6">
+      <div key="redirecting" className="flex flex-col items-center justify-center flex-1 gap-4 px-6 animate-fade-in">
         <svg
           className="animate-spin text-primary"
           width="32"
@@ -274,7 +274,7 @@ export default function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       <div className="flex-1 flex flex-col px-5 pt-4 pb-8 gap-4 overflow-y-auto">
         {/* Username appears here, below password, only in sign-up */}
         {mode === "signup" && (
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5 animate-page-enter">
             <label className={LABEL_CLASS}>Username</label>
             <input
               className={INPUT_CLASS}

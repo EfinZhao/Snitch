@@ -40,6 +40,17 @@ const ARC_CY = 90;
 const ARC_CIRCUMFERENCE = 2 * Math.PI * ARC_R; // ≈ 477.52
 
 let sessionTimerInterval = null;
+let lastRenderedDistractionCount = 0;
+let distractionAnimTimeout = null;
+
+function triggerDistractionAnimation() {
+  clearTimeout(distractionAnimTimeout);
+  arcProgress.classList.add("arc-heartbeat");
+  distractionAnimTimeout = setTimeout(() => {
+    arcProgress.classList.remove("arc-heartbeat");
+    arcProgress.style.stroke = "var(--primary)";
+  }, 10000);
+}
 
 function formatSessionTime(s) {
   const h = Math.floor(s / 3600);
@@ -83,9 +94,18 @@ function renderSessionArc(endEpoch, totalSeconds, fractions, distractionCount, a
   sessionTimeDisplay.textContent = formatSessionTime(secondsRemaining);
   sessionTimeDisplay.style.color = isFailed ? "var(--error)" : "var(--primary)";
 
+  // Trigger heartbeat animation when a new distraction arrives
+  if (distractionCount > lastRenderedDistractionCount) {
+    triggerDistractionAnimation();
+  }
+  lastRenderedDistractionCount = distractionCount;
+
   // Arc — dashoffset = 0 means full ring visible; increase offset to "drain" it
   arcProgress.style.strokeDashoffset = elapsedFraction * ARC_CIRCUMFERENCE;
-  arcProgress.style.stroke = isFailed ? "var(--error)" : "var(--primary)";
+  // Only set stroke color when not heartbeating — the CSS class handles red
+  if (!arcProgress.classList.contains("arc-heartbeat")) {
+    arcProgress.style.stroke = "var(--primary)";
+  }
 
   // Tick marks (red triangles at each distraction's arc position)
   arcTicks.innerHTML = "";
@@ -112,7 +132,12 @@ function renderSessionArc(endEpoch, totalSeconds, fractions, distractionCount, a
 }
 
 function startSessionTimer(endEpoch, totalSeconds, fractions, distractionCount, amountCents) {
+  const isFirstStart = sessionTimerInterval === null;
   clearInterval(sessionTimerInterval);
+  // On fresh start/resume, initialize count so we don't animate existing distractions
+  if (isFirstStart) {
+    lastRenderedDistractionCount = distractionCount;
+  }
   renderSessionArc(endEpoch, totalSeconds, fractions, distractionCount, amountCents);
   sessionTimerInterval = setInterval(() => {
     renderSessionArc(endEpoch, totalSeconds, fractions, distractionCount, amountCents);
@@ -136,6 +161,10 @@ function updateSessionUI(activeSession, data) {
     sessionPanel.classList.add("hidden");
     clearInterval(sessionTimerInterval);
     sessionTimerInterval = null;
+    clearTimeout(distractionAnimTimeout);
+    arcProgress.classList.remove("arc-heartbeat");
+    arcProgress.style.stroke = "var(--primary)";
+    lastRenderedDistractionCount = 0;
     if (!activeSession) {
       blockToggleWrap.classList.remove("locked");
     }

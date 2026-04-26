@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import FocusDashboard from "./components/screens/FocusDashboard";
 import FocusStats from "./components/screens/FocusStats";
 import FocusSettings from "./components/screens/FocusSettings";
@@ -145,9 +145,8 @@ function clearLaunchParamsFromUrl(): void {
   window.history.replaceState(null, "", next);
 }
 
-const OUTER =
-  "min-h-dvh bg-gradient-to-br from-[#f0f4f9] to-[#e8f0f9] flex flex-col";
-const AUTH_OUTER = "min-h-dvh bg-surface flex justify-center items-center";
+const OUTER = "min-h-dvh app-bg flex flex-col";
+const AUTH_OUTER = "min-h-dvh surface-dot-bg flex justify-center items-center";
 const AUTH_INNER = [
   "flex flex-col w-full h-full",
   "sm:max-w-[360px] sm:h-auto sm:rounded-2xl",
@@ -169,6 +168,55 @@ const Spinner = ({ size = 28 }: { size?: number }) => (
     <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
   </svg>
 );
+
+// ── Sliding nav underbar ──────────────────────────────────────────────────────
+
+function SlidingNav({
+  screen,
+  onNavigate,
+}: {
+  screen: Screen;
+  onNavigate: (s: Screen) => void;
+}) {
+  const btnRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const [underbar, setUnderbar] = useState({ left: 0, width: 0 });
+
+  useEffect(() => {
+    const activeIdx = NAV.findIndex((n) => NAV_ACTIVE[screen] === n.id);
+    const el = btnRefs.current[activeIdx];
+    if (!el) return;
+    setUnderbar({ left: el.offsetLeft, width: el.offsetWidth });
+  }, [screen]);
+
+  return (
+    <nav className="relative flex items-center gap-1 flex-1 justify-center">
+      {NAV.map(({ id, label }, i) => {
+        const active = NAV_ACTIVE[screen] === id;
+        return (
+          <button
+            key={id}
+            ref={(el) => { btnRefs.current[i] = el; }}
+            onClick={() => onNavigate(id)}
+            className={[
+              "px-4 py-1.5 font-body font-medium text-sm transition-colors duration-200",
+              active ? "text-primary font-semibold" : "text-on-surface-variant hover:text-on-surface",
+            ].join(" ")}
+          >
+            {label}
+          </button>
+        );
+      })}
+      <span
+        className="absolute bottom-0 h-0.5 bg-primary rounded-full"
+        style={{
+          left: underbar.left,
+          width: underbar.width,
+          transition: "left 0.3s cubic-bezier(0.4, 0, 0.2, 1), width 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+        }}
+      />
+    </nav>
+  );
+}
 
 // ── Shared shell (header + nav) ───────────────────────────────────────────────
 
@@ -193,27 +241,7 @@ function Shell({
         <span className="font-display font-bold text-xl text-primary italic tracking-tight select-none w-32">
           Snitch
         </span>
-        {showNav && (
-          <nav className="flex items-center gap-1 flex-1 justify-center">
-            {NAV.map(({ id, label }) => {
-              const active = NAV_ACTIVE[screen] === id;
-              return (
-                <button
-                  key={id}
-                  onClick={() => onNavigate(id)}
-                  className={[
-                    "px-4 py-1.5 font-body font-medium text-sm transition-colors",
-                    active
-                      ? "text-primary font-semibold border-b-2 border-primary"
-                      : "text-on-surface-variant hover:text-on-surface",
-                  ].join(" ")}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </nav>
-        )}
+        {showNav && <SlidingNav screen={screen} onNavigate={onNavigate} />}
         <div className="flex items-center gap-2 ml-auto">
           <button
             className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors"
@@ -257,7 +285,7 @@ function Shell({
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto">{children}</main>
+      <main className="flex-1 overflow-y-auto relative overflow-x-hidden">{children}</main>
     </>
   );
 }
@@ -394,7 +422,7 @@ function SetupScreen({
   // ── Refreshing ──────────────────────────────────────────────────────────────
   if (step === "refreshing") {
     return wrap(
-      <div className="flex flex-col items-center justify-center flex-1 gap-4 h-full">
+      <div key="refreshing" className="flex flex-col items-center justify-center flex-1 gap-4 h-full animate-fade-in">
         <Spinner />
         <p className="font-body text-sm text-on-surface-variant italic">
           Refreshing setup link…
@@ -406,7 +434,7 @@ function SetupScreen({
   // ── Verifying ───────────────────────────────────────────────────────────────
   if (step === "verifying") {
     return wrap(
-      <div className="flex flex-col items-center justify-center flex-1 px-6 gap-6 text-center h-full">
+      <div key="verifying" className="flex flex-col items-center justify-center flex-1 px-6 gap-6 text-center h-full animate-page-enter">
         <div className="flex flex-col items-center gap-3">
           <Spinner size={32} />
           <h1 className="font-display font-semibold text-2xl text-on-surface">
@@ -434,7 +462,7 @@ function SetupScreen({
   // ── Card step ───────────────────────────────────────────────────────────────
   if (step === "card") {
     return wrap(
-      <div className="flex flex-col flex-1 px-6 py-8 gap-6">
+      <div key="card" className="flex flex-col flex-1 px-6 py-8 gap-6 animate-page-enter-right">
         <div className="flex flex-col gap-1">
           <span className="text-3xl select-none">💳</span>
           <h1 className="font-display font-semibold text-2xl text-on-surface mt-2">
@@ -462,7 +490,7 @@ function SetupScreen({
 
   // ── Connect onboarding step ─────────────────────────────────────────────────
   return wrap(
-    <div className="flex flex-col items-center justify-center flex-1 px-6 gap-6 text-center h-full">
+    <div key="connecting" className="flex flex-col items-center justify-center flex-1 px-6 gap-6 text-center h-full animate-page-enter-right">
       <div className="flex flex-col items-center gap-2">
         <span className="text-4xl select-none">🔒</span>
         <h1 className="font-display font-semibold text-2xl text-on-surface">
@@ -514,6 +542,7 @@ export default function App() {
   // userLoading only applies when a token exists and we haven't fetched the profile yet
   const [userLoading, setUserLoading] = useState(!!token);
   const [screen, setScreen] = useState<Screen>("dashboard");
+  const [prevScreen, setPrevScreen] = useState<Screen>("dashboard");
   const [dashboardRenderKey, setDashboardRenderKey] = useState(0);
 
   // Fetch user profile whenever the token changes
@@ -628,7 +657,12 @@ export default function App() {
     setToken(newToken);
   }
 
-  const navigate = (s: Screen) => setScreen(s);
+  const NAV_ORDER: Screen[] = ["dashboard", "stats", "monitor", "settings"];
+
+  const navigate = (s: Screen) => {
+    setPrevScreen(screen);
+    setScreen(s);
+  };
 
   const cameraMonitor = useCameraMonitor(token);
 
@@ -645,7 +679,7 @@ export default function App() {
   if (!token || !activeUser) {
     return (
       <div className={AUTH_OUTER}>
-        <div className={AUTH_INNER}>
+        <div className={`${AUTH_INNER} animate-page-enter`}>
           <AuthScreen onAuthenticated={handleAuthenticated} />
         </div>
       </div>
@@ -667,6 +701,15 @@ export default function App() {
   }
 
   // ── Main app ─────────────────────────────────────────────────────────────
+  const prevIdx = NAV_ORDER.indexOf(prevScreen);
+  const currIdx = NAV_ORDER.indexOf(screen);
+  const slideClass =
+    prevIdx === currIdx
+      ? "animate-page-enter"
+      : currIdx > prevIdx
+        ? "animate-page-enter-right"
+        : "animate-page-enter-left";
+
   return (
     <div className={OUTER}>
       <div className={INNER}>
@@ -676,33 +719,35 @@ export default function App() {
           screen={screen}
           onNavigate={navigate}
         >
-          {screen === "dashboard" && (
-            <FocusDashboard
-              key={dashboardRenderKey}
-              navigate={navigate}
-              token={token}
-              user={activeUser}
-              cameraMonitor={cameraMonitor}
-            />
-          )}
-          {screen === "stats" && (
-            <FocusStats navigate={navigate} token={token} user={activeUser} />
-          )}
-          {screen === "monitor" && (
-            <DistractionMonitor
-              navigate={navigate}
-              cameraMonitor={cameraMonitor}
-            />
-          )}
-          {screen === "settings" && (
-            <FocusSettings
-              navigate={navigate}
-              token={token}
-              user={activeUser}
-              onSignOut={signOut}
-              onUserUpdate={setUser}
-            />
-          )}
+          <div key={screen} className={slideClass}>
+            {screen === "dashboard" && (
+              <FocusDashboard
+                key={dashboardRenderKey}
+                navigate={navigate}
+                token={token}
+                user={activeUser}
+                cameraMonitor={cameraMonitor}
+              />
+            )}
+            {screen === "stats" && (
+              <FocusStats navigate={navigate} token={token} user={activeUser} />
+            )}
+            {screen === "monitor" && (
+              <DistractionMonitor
+                navigate={navigate}
+                cameraMonitor={cameraMonitor}
+              />
+            )}
+            {screen === "settings" && (
+              <FocusSettings
+                navigate={navigate}
+                token={token}
+                user={activeUser}
+                onSignOut={signOut}
+                onUserUpdate={setUser}
+              />
+            )}
+          </div>
         </Shell>
       </div>
     </div>
