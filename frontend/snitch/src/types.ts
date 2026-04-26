@@ -13,7 +13,7 @@ export interface UserProfile {
   created_at: string
 }
 
-export interface StakeRead {
+export interface SessionRead {
   id: number
   creator_id: number
   creator_username: string

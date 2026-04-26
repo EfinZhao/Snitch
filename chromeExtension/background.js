@@ -52,7 +52,7 @@ function isFlaggedSite(hostname, blocklist) {
 
 function reportDistraction(hostname, url, token) {
   if (!token) return;
-  fetch(`${API_BASE}/stakes/report-distraction`, {
+  fetch(`${API_BASE}/sessions/report-distraction`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -72,7 +72,7 @@ async function checkActiveSession() {
       }
 
       try {
-        const res = await fetch(`${API_BASE}/stakes?status=active`, {
+        const res = await fetch(`${API_BASE}/sessions?status=active`, {
           headers: { Authorization: `Bearer ${result.authToken}` },
         });
 
@@ -82,8 +82,8 @@ async function checkActiveSession() {
           return;
         }
 
-        const stakes = await res.json();
-        const hasActive = Array.isArray(stakes) && stakes.length > 0;
+        const sessions = await res.json();
+        const hasActive = Array.isArray(sessions) && sessions.length > 0;
         chrome.storage.local.set({ activeSession: hasActive });
         resolve(hasActive);
       } catch {

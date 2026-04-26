@@ -124,7 +124,7 @@ export function useCameraMonitor(token: string | null): CameraMonitorState {
     setStrikes(s => s + 1)
     addEvent(cat, 'distracted')
     if (token) {
-      apiPost('/stakes/report-distraction', { hostname: cat, url: `snitch://distraction/${cat}` }, token)
+      apiPost('/sessions/report-distraction', { hostname: cat, url: `snitch://distraction/${cat}` }, token)
         .catch(() => {})
     }
   }, [token])

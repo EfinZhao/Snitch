@@ -7,7 +7,7 @@ import AuthScreen from "./components/screens/AuthScreen";
 import StripeCardForm from "./components/StripeCardForm";
 import { useCameraMonitor } from "./hooks/useCameraMonitor";
 import { apiGet, apiPost } from "./api/client";
-import type { Screen, StakeRead, UserProfile } from "./types";
+import type { Screen, SessionRead, UserProfile } from "./types";
 
 const NAV = [
   {
@@ -116,21 +116,21 @@ const stripeReturn = resolveInitialPath();
 
 type LaunchParams = {
   launchToken: string | null;
-  autoStartStakeId: number | null;
+  autoStartSessionId: number | null;
 };
 
 function parseLaunchParams(): LaunchParams {
   const params = new URLSearchParams(window.location.search);
   const launchToken = params.get("launch_token");
   const autoStart = params.get("auto_start");
-  const stakeIdRaw = params.get("stake_id");
-  const autoStartStakeId =
-    autoStart === "1" && stakeIdRaw && /^\d+$/.test(stakeIdRaw)
-      ? Number(stakeIdRaw)
+  const sessionIdRaw = params.get("session_id");
+  const autoStartSessionId =
+    autoStart === "1" && sessionIdRaw && /^\d+$/.test(sessionIdRaw)
+      ? Number(sessionIdRaw)
       : null;
   return {
     launchToken: launchToken && launchToken.length > 0 ? launchToken : null,
-    autoStartStakeId,
+    autoStartSessionId,
   };
 }
 
@@ -139,7 +139,7 @@ function clearLaunchParamsFromUrl(): void {
   const params = new URLSearchParams(window.location.search);
   params.delete("launch_token");
   params.delete("auto_start");
-  params.delete("stake_id");
+  params.delete("session_id");
   const query = params.toString();
   const next = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
   window.history.replaceState(null, "", next);
@@ -492,8 +492,8 @@ export default function App() {
     localStorage.getItem("snitch_token"),
   );
   const [launchToken, setLaunchToken] = useState<string | null>(launchParams.launchToken);
-  const [pendingAutoStartStakeId, setPendingAutoStartStakeId] = useState<number | null>(
-    launchParams.autoStartStakeId,
+  const [pendingAutoStartSessionId, setPendingAutoStartSessionId] = useState<number | null>(
+    launchParams.autoStartSessionId,
   );
   const [user, setUser] = useState<UserProfile | null>(null);
   // userLoading only applies when a token exists and we haven't fetched the profile yet
@@ -539,40 +539,40 @@ export default function App() {
       });
   }, [token, launchToken]);
 
-  // Launch flow: activate stake, then hydrate Home dashboard session state.
+  // Launch flow: activate session, then hydrate Home dashboard session state.
   useEffect(() => {
-    if (!token || pendingAutoStartStakeId == null) return;
-    const stakeId = pendingAutoStartStakeId;
-    apiPost<StakeRead>(`/stakes/${stakeId}/activate`, {}, token)
+    if (!token || pendingAutoStartSessionId == null) return;
+    const sessionId = pendingAutoStartSessionId;
+    apiPost<SessionRead>(`/sessions/${sessionId}/activate`, {}, token)
       .catch(() => {
         // If already active, continue by fetching details.
         return null;
       })
-      .then(async (activatedStake) => {
+      .then(async (activatedSession) => {
         // Don't clobber a different session that is still running locally.
         const existingRaw = localStorage.getItem("snitch_session");
         if (existingRaw) {
           try {
-            const existing = JSON.parse(existingRaw) as { stakeId?: number; endEpoch?: number };
+            const existing = JSON.parse(existingRaw) as { sessionId?: number; endEpoch?: number };
             const rem = Math.max(0, Math.floor(((existing.endEpoch ?? 0) - Date.now()) / 1000));
-            if (existing.stakeId !== stakeId && rem > 0) return;
+            if (existing.sessionId !== sessionId && rem > 0) return;
           } catch {}
         }
 
-        const stake =
-          activatedStake ??
-          (await apiGet<StakeRead>(`/stakes/${stakeId}`, token));
+        const session =
+          activatedSession ??
+          (await apiGet<SessionRead>(`/sessions/${sessionId}`, token));
 
-        const elapsed = Math.max(0, stake.elapsed_seconds ?? 0);
-        const remaining = Math.max(0, stake.duration_seconds - elapsed);
+        const elapsed = Math.max(0, session.elapsed_seconds ?? 0);
+        const remaining = Math.max(0, session.duration_seconds - elapsed);
         localStorage.setItem(
           "snitch_session",
           JSON.stringify({
-            stakeId: stake.id,
+            sessionId: session.id,
             endEpoch: Date.now() + remaining * 1000,
-            durationSeconds: stake.duration_seconds,
-            amountCents: stake.amount_cents,
-            recipientUsernames: stake.recipients.map((r) => r.recipient_username),
+            durationSeconds: session.duration_seconds,
+            amountCents: session.amount_cents,
+            recipientUsernames: session.recipients.map((r) => r.recipient_username),
             distractionFractions: [],
           }),
         );
@@ -581,10 +581,10 @@ export default function App() {
         setDashboardRenderKey((k) => k + 1);
       })
       .finally(() => {
-        setPendingAutoStartStakeId(null);
+        setPendingAutoStartSessionId(null);
         clearLaunchParamsFromUrl();
       });
-  }, [token, pendingAutoStartStakeId]);
+  }, [token, pendingAutoStartSessionId]);
 
   // Derive: if there is no token the cached user object should not be trusted
   const activeUser = token ? user : null;
